@@ -34,6 +34,27 @@ export function getMediaForCamera(cameraId: string, media: MediaItem[] = MEDIA):
   return media.filter((item) => item.cameraId === cameraId);
 }
 
+export function getMediaById(mediaId: string, media: MediaItem[] = MEDIA): MediaItem | undefined {
+  return media.find((item) => item.id === mediaId);
+}
+
+/**
+ * Given a chronologically sorted list, finds the items immediately
+ * before and after the one matching mediaId. Returns an empty object
+ * (no crash) if mediaId isn't present in the list.
+ */
+export function getAdjacentMedia(
+  sortedMedia: MediaItem[],
+  mediaId: string,
+): { previous?: MediaItem; next?: MediaItem } {
+  const index = sortedMedia.findIndex((item) => item.id === mediaId);
+  if (index === -1) return {};
+  return {
+    previous: index > 0 ? sortedMedia[index - 1] : undefined,
+    next: index < sortedMedia.length - 1 ? sortedMedia[index + 1] : undefined,
+  };
+}
+
 /**
  * Filters media whose capturedAtUtc falls within [start, end], inclusive.
  * Accepts ISO date/time strings or Date objects.

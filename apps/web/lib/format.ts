@@ -110,3 +110,18 @@ export function formatFileSize(bytes: number): string {
   const megabytes = kilobytes / 1024;
   return `${megabytes.toFixed(megabytes < 10 ? 1 : 0)} MB`;
 }
+
+/** e.g. "10 February 2025" — the local calendar date only (no time), in the given time zone. */
+export function formatLocalDate(capturedAtUtc: string, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-AU", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone,
+  }).format(new Date(capturedAtUtc));
+}
+
+/** e.g. "2025-02-09 19:00:00 UTC" — a readable rendering of a raw UTC instant, unchanged in meaning. */
+export function formatUtcTimestamp(capturedAtUtc: string): string {
+  return `${capturedAtUtc.slice(0, 19).replace("T", " ")} UTC`;
+}

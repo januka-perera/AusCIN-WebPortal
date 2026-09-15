@@ -9,9 +9,11 @@ import {
   filterMediaByPublicationStatus,
   filterMediaByTimeOfDay,
   filterMediaByType,
+  getAdjacentMedia,
   getAllStations,
   getCameraById,
   getCamerasForStation,
+  getMediaById,
   getMediaForCamera,
   getMediaForStation,
   getRelatedMedia,
@@ -68,6 +70,15 @@ describe("media lookup", () => {
     const media = getMediaForStation("STN-SEAGLASS");
     expect(media.length).toBeGreaterThan(0);
     expect(media.every((item) => item.stationId === "STN-SEAGLASS")).toBe(true);
+  });
+
+  it("finds a media item by ID", () => {
+    const item = getMediaById("STN-SEAGLASS-CAM1-20250210-0600");
+    expect(item?.stationId).toBe("STN-SEAGLASS");
+  });
+
+  it("returns undefined for an invalid media ID", () => {
+    expect(getMediaById("MEDIA-DOES-NOT-EXIST")).toBeUndefined();
   });
 
   it("returns an empty array for an invalid media owner", () => {
@@ -169,6 +180,36 @@ describe("related media", () => {
 
   it("returns an empty array for an invalid media ID", () => {
     expect(getRelatedMedia("MEDIA-DOES-NOT-EXIST")).toEqual([]);
+  });
+});
+
+describe("adjacent media", () => {
+  it("finds the previous and next items in a sorted list", () => {
+    const sorted = sortMediaByCaptureTime(getMediaForCamera("STN-SEAGLASS-CAM1"), "asc");
+    const middleId = sorted[5].id;
+    const { previous, next } = getAdjacentMedia(sorted, middleId);
+    expect(previous?.id).toBe(sorted[4].id);
+    expect(next?.id).toBe(sorted[6].id);
+  });
+
+  it("has no previous item at the start of the list", () => {
+    const sorted = sortMediaByCaptureTime(getMediaForCamera("STN-SEAGLASS-CAM1"), "asc");
+    const { previous, next } = getAdjacentMedia(sorted, sorted[0].id);
+    expect(previous).toBeUndefined();
+    expect(next?.id).toBe(sorted[1].id);
+  });
+
+  it("has no next item at the end of the list", () => {
+    const sorted = sortMediaByCaptureTime(getMediaForCamera("STN-SEAGLASS-CAM1"), "asc");
+    const last = sorted[sorted.length - 1];
+    const { previous, next } = getAdjacentMedia(sorted, last.id);
+    expect(next).toBeUndefined();
+    expect(previous?.id).toBe(sorted[sorted.length - 2].id);
+  });
+
+  it("returns an empty object for a media ID not present in the list", () => {
+    const sorted = sortMediaByCaptureTime(getMediaForCamera("STN-SEAGLASS-CAM1"), "asc");
+    expect(getAdjacentMedia(sorted, "MEDIA-DOES-NOT-EXIST")).toEqual({});
   });
 });
 

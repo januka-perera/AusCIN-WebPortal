@@ -3,10 +3,12 @@ import {
   formatCoordinates,
   formatDayHeading,
   formatFileSize,
+  formatLocalDate,
   formatLocalDateTime,
   formatLocalTime,
   formatOperationalDate,
   formatShortDate,
+  formatUtcTimestamp,
   getLocalDateKey,
   getLocalMinutesOfDay,
 } from "./format";
@@ -89,5 +91,18 @@ describe("formatFileSize", () => {
 
   it("formats megabytes", () => {
     expect(formatFileSize(1_296_000)).toBe("1.2 MB");
+  });
+});
+
+describe("formatLocalDate", () => {
+  it("formats the local calendar date without a time component", () => {
+    // 20:00 UTC on the 9th is 06:00 local on the 10th in Brisbane (UTC+10).
+    expect(formatLocalDate("2025-02-09T20:00:00.000Z", "Australia/Brisbane")).toBe("10 February 2025");
+  });
+});
+
+describe("formatUtcTimestamp", () => {
+  it("renders the raw UTC instant in a readable form", () => {
+    expect(formatUtcTimestamp("2025-02-09T19:00:00.000Z")).toBe("2025-02-09 19:00:00 UTC");
   });
 });

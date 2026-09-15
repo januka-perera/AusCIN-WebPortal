@@ -178,7 +178,11 @@ export default async function StationDetailPage({
         ) : (
           <div className="mt-8 grid grid-cols-2 gap-6 sm:grid-cols-3">
             {latestObservations.map((item) => (
-              <div key={item.id} className="border-t border-border pt-3">
+              <Link
+                key={item.id}
+                href={`/stations/${station.id}/archive/${item.id}`}
+                className="block border-t border-border pt-3"
+              >
                 <ObservationThumbnail item={item} sizes="(min-width: 640px) 33vw, 50vw" />
                 <p className="mt-2 text-small font-medium text-foreground">
                   {formatMediaTypeLabel(item.mediaType)}
@@ -187,7 +191,7 @@ export default async function StationDetailPage({
                   {formatLocalDateTime(item.capturedAtUtc, item.displayTimeZone)}
                 </p>
                 <p className="mt-1 text-small text-muted">{item.caption}</p>
-              </div>
+              </Link>
             ))}
           </div>
         )}
