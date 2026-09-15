@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { ImageCard } from "@/components/ui/image-card";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { getAllStations, getCamerasForStation, getMediaForStation } from "@/data";
+import { getOperatingStatusTone } from "@/lib/status-tone";
 
 export const metadata: Metadata = {
   title: "Stations",
@@ -50,7 +51,7 @@ export default function StationsPage() {
               meta={`${station.region} · ${cameraCount} cameras · ${mediaCount} observations`}
               status={{
                 label: station.operationalStatus,
-                tone: station.operationalStatus === "active" ? "positive" : "caution",
+                tone: getOperatingStatusTone(station.operationalStatus),
               }}
             />
           );
