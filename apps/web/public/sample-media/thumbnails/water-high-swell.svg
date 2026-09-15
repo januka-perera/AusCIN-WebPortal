@@ -1,0 +1,12 @@
+<svg viewBox="0 0 800 600" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Synthetic sample fixture: high swell scene">
+  <rect width="800" height="600" fill="#f7f4ee" />
+  <rect x="0" y="0" width="800" height="140" fill="#f7f4ee" />
+  <rect x="0" y="140" width="800" height="460" fill="#1c6583" />
+  <path d="M0 140 H800" stroke="#12475c" stroke-width="2" />
+  <path d="M0 240 L60 210 L120 250 L180 205 L240 255 L300 200 L360 250 L420 210 L480 255 L540 205 L600 250 L660 210 L720 255 L800 220" fill="none" stroke="#f7f4ee" stroke-width="5" opacity="0.85" />
+  <path d="M0 330 L60 300 L120 340 L180 295 L240 345 L300 290 L360 340 L420 300 L480 345 L540 295 L600 340 L660 300 L720 345 L800 310" fill="none" stroke="#f7f4ee" stroke-width="5" opacity="0.6" />
+  <path d="M0 420 L60 395 L120 430 L180 390 L240 435 L300 385 L360 430 L420 395 L480 435 L540 390 L600 430 L660 395 L720 435 L800 405" fill="none" stroke="#f7f4ee" stroke-width="5" opacity="0.4" />
+  <rect x="0" y="0" width="800" height="600" fill="none" stroke="#ddd4c1" stroke-width="4" stroke-dasharray="10 8" />
+  <text x="24" y="558" font-family="sans-serif" font-size="20" font-weight="700" fill="#1b1f22" letter-spacing="1">SAMPLE OBSERVATION</text>
+  <text x="24" y="582" font-family="sans-serif" font-size="15" fill="#3d4348">High swell — synthetic development fixture</text>
+</svg>
