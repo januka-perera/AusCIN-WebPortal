@@ -6,16 +6,25 @@ type SectionHeadingProps = {
   title: string;
   description?: string;
   action?: { label: string; href: string };
+  /** Use "h1" when this is a page's only top-level heading. Defaults to "h2". */
+  level?: "h1" | "h2";
 };
 
-export function SectionHeading({ eyebrow, title, description, action }: SectionHeadingProps) {
+export function SectionHeading({
+  eyebrow,
+  title,
+  description,
+  action,
+  level = "h2",
+}: SectionHeadingProps) {
+  const Heading = level;
   return (
     <div className="flex flex-col gap-4 border-b border-border pb-6 sm:flex-row sm:items-end sm:justify-between">
       <div>
         {eyebrow && <p className="text-meta uppercase tracking-label text-accent">{eyebrow}</p>}
-        <h2 className={cn("font-display text-heading-lg text-foreground", eyebrow && "mt-2")}>
+        <Heading className={cn("font-display text-heading-lg text-foreground", eyebrow && "mt-2")}>
           {title}
-        </h2>
+        </Heading>
         {description && <p className="mt-2 max-w-xl text-small text-muted">{description}</p>}
       </div>
       {action && (

@@ -23,7 +23,7 @@ const sourceSerif = Source_Serif_4({
 export const metadata: Metadata = {
   title: `${SITE_NAME} — ${SITE_TAGLINE}`,
   description:
-    "Browse coastal imagery, time-lapse video and observation metadata from fixed camera and lidar stations around Australia.",
+    "Browse coastal observations — images, time-lapse video and capture metadata — from Australian fixed-camera and lidar stations, CoastSnap sites and cameras of opportunity.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -40,7 +40,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             <p>
               {SITE_NAME} — {SITE_TAGLINE}
             </p>
-            <p>Coastal observation data for research, management and community understanding.</p>
+            <p>Development build — station, camera and media records are synthetic sample data.</p>
           </div>
         </footer>
       </body>

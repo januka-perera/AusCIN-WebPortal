@@ -7,22 +7,22 @@ const capabilities = [
   {
     title: "Browse by station",
     description:
-      "Move from a national overview to an individual camera or lidar station, with its location, cameras and operating status.",
+      "Move from a national list to a single station — its location, state or territory, cameras, lidar coverage and current operating status.",
   },
   {
-    title: "Filter by date and time",
+    title: "Filter by camera and time",
     description:
-      "Step through an archive by date range and time of day to follow how a stretch of coastline changes.",
+      "Step through a station's archive by date range, time of day and camera to compare conditions hour by hour.",
   },
   {
-    title: "Inspect capture metadata",
+    title: "Read the capture metadata",
     description:
-      "Every image and video carries its station, camera, capture time and technical detail alongside the observation.",
+      "Every image, composite and time-lapse keeps its station, camera, capture time in UTC, local time zone and processing status.",
   },
   {
-    title: "Download permitted originals",
+    title: "Download permitted files",
     description:
-      "Where a file's visibility allows it, download the original image or video for research or reporting use.",
+      "Download the original file where its publication status allows it — useful for reporting, coastal-management work or further analysis.",
   },
 ];
 
@@ -33,15 +33,16 @@ export default function Home() {
         <div className="mx-auto grid max-w-6xl gap-10 px-6 py-16 sm:py-24 lg:grid-cols-[3fr_2fr] lg:items-center lg:gap-16">
           <div>
             <p className="text-meta uppercase tracking-label text-accent">
-              Coastal observation network
+              Coastal observation archive
             </p>
             <h1 className="mt-4 font-display text-display-md text-foreground sm:text-display-lg">
-              A continuous record of Australia&apos;s coastline.
+              Browse coastal observations by station, camera and capture time.
             </h1>
             <p className="mt-6 max-w-xl text-body text-muted">
-              AusCIN coordinates imagery from fixed coastal camera and lidar stations, existing
-              camera infrastructure and CoastSnap sites, and makes it available for research,
-              coastal management and public understanding.
+              AusCIN brings together fixed coastal cameras, lidar reference stations, existing
+              camera infrastructure and CoastSnap observations in one searchable archive. Every
+              image and video keeps its station, camera, capture time and processing status, with
+              timestamps stored in UTC and shown in the station&apos;s local time zone.
             </p>
             <div className="mt-8">
               <Button href="/stations">
@@ -66,7 +67,11 @@ export default function Home() {
 
       <section className="border-b border-border">
         <div className="mx-auto max-w-6xl px-6 py-16 sm:py-20">
-          <SectionHeading title="What you can do here" />
+          <SectionHeading
+            eyebrow="Archive structure"
+            title="How AusCIN organises coastal imagery"
+            description="Every record is tied to a station, a camera and a capture time — the three things you can always filter by."
+          />
           <dl className="mt-8 grid gap-8 sm:grid-cols-2">
             {capabilities.map((item) => (
               <div key={item.title} className="border-t border-border pt-4">
@@ -80,17 +85,20 @@ export default function Home() {
 
       <section>
         <div className="mx-auto grid max-w-6xl gap-8 px-6 py-16 sm:py-20 lg:grid-cols-[2fr_3fr] lg:gap-16">
-          <h2 className="font-display text-heading-lg text-foreground">Why AusCIN exists</h2>
+          <h2 className="font-display text-heading-lg text-foreground">
+            From camera frames to long-term coastal records
+          </h2>
           <div className="space-y-4 text-body text-muted">
             <p>
-              Coastlines change on time scales that are easy to miss day to day but significant
-              over months and years. AusCIN builds a long-term, openly accessible archive of
-              coastal imagery so that this change can be observed, measured and understood.
+              A single frame from a fixed camera shows conditions on one day. The same station,
+              camera and view direction repeated over months and years shows how a beach, dune or
+              headland is actually changing.
             </p>
             <p>
-              The network brings together purpose-built camera and lidar stations with existing
-              infrastructure and community CoastSnap sites, presenting them through a single
-              catalogue rather than as scattered, one-off feeds.
+              AusCIN catalogues imagery from fixed reference cameras, lidar stations, existing
+              infrastructure and CoastSnap observations against a shared station and camera
+              record. The same structure is built to connect that imagery to the coastal datasets
+              and research products it supports, so a capture is never just a picture on its own.
             </p>
           </div>
         </div>
