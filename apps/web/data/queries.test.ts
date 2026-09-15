@@ -4,6 +4,10 @@ import { MEDIA } from "./sample/media";
 import { STATIONS } from "./sample/stations";
 import {
   filterMediaByDateRange,
+  filterMediaByLocalDate,
+  filterMediaByProcessingStatus,
+  filterMediaByPublicationStatus,
+  filterMediaByTimeOfDay,
   filterMediaByType,
   getAllStations,
   getCameraById,
@@ -12,6 +16,8 @@ import {
   getMediaForStation,
   getRelatedMedia,
   getStationById,
+  getStationTimeZone,
+  groupMediaByLocalDate,
   sortMediaByCaptureTime,
 } from "./queries";
 
@@ -163,6 +169,95 @@ describe("related media", () => {
 
   it("returns an empty array for an invalid media ID", () => {
     expect(getRelatedMedia("MEDIA-DOES-NOT-EXIST")).toEqual([]);
+  });
+});
+
+describe("local-date filtering", () => {
+  it("finds the single local date's observations, timezone-aware", () => {
+    const media = getMediaForCamera("STN-SEAGLASS-CAM1");
+    const day = filterMediaByLocalDate(media, "2025-02-10");
+    expect(day.length).toBeGreaterThan(0);
+    expect(day.every((item) => item.id.includes("20250210"))).toBe(true);
+  });
+
+  it("returns an empty array for the skipped local date", () => {
+    const media = getMediaForCamera("STN-WINDARA-CAM1");
+    expect(filterMediaByLocalDate(media, "2025-02-11")).toEqual([]);
+  });
+
+  it("returns an empty array for a date outside the sample window", () => {
+    expect(filterMediaByLocalDate(MEDIA, "2030-01-01")).toEqual([]);
+  });
+});
+
+describe("time-of-day filtering", () => {
+  it("finds morning captures within a same-day range", () => {
+    const media = getMediaForCamera("STN-SEAGLASS-CAM1");
+    // Morning slot is 06:00 local -> 360 minutes.
+    const morning = filterMediaByTimeOfDay(media, 300, 659);
+    expect(morning.length).toBeGreaterThan(0);
+    expect(morning.every((item) => item.id.includes("-0600"))).toBe(true);
+  });
+
+  it("handles a range that wraps past local midnight", () => {
+    const media = getMediaForCamera("STN-SEAGLASS-CAM1");
+    // Night window 21:00-04:59 should include the 22:00 and 22:30 (timelapse) slots.
+    const night = filterMediaByTimeOfDay(media, 1260, 299);
+    expect(night.length).toBeGreaterThan(0);
+    expect(night.every((item) => item.id.includes("-2200") || item.id.includes("TIMELAPSE"))).toBe(
+      true,
+    );
+  });
+
+  it("returns an empty array when no captures fall in the window", () => {
+    // 02:00-02:59 local has no sample captures.
+    expect(filterMediaByTimeOfDay(MEDIA, 120, 179)).toEqual([]);
+  });
+});
+
+describe("processing and publication status filtering", () => {
+  it("finds the single processing item", () => {
+    expect(filterMediaByProcessingStatus(MEDIA, "processing")).toHaveLength(1);
+  });
+
+  it("finds the single failed item", () => {
+    expect(filterMediaByProcessingStatus(MEDIA, "failed")).toHaveLength(1);
+  });
+
+  it("finds project-only items (the lidar camera plus one composite override)", () => {
+    const projectOnly = filterMediaByPublicationStatus(MEDIA, "project-only");
+    expect(projectOnly.length).toBeGreaterThan(0);
+    expect(projectOnly.every((item) => item.publicationStatus === "project-only")).toBe(true);
+  });
+
+  it("returns an empty array for a status with no matches in a narrowed set", () => {
+    const media = getMediaForCamera("STN-SEAGLASS-CAM1");
+    expect(filterMediaByProcessingStatus(media, "failed")).toEqual([]);
+  });
+});
+
+describe("grouping by local date", () => {
+  it("groups a station's media into its three sample dates", () => {
+    const media = getMediaForStation("STN-SEAGLASS");
+    const groups = groupMediaByLocalDate(media);
+    expect([...groups.keys()].sort()).toEqual(["2025-02-10", "2025-02-11", "2025-02-12"]);
+  });
+
+  it("omits the skipped date for the affected camera only", () => {
+    const media = getMediaForCamera("STN-WINDARA-CAM1");
+    const groups = groupMediaByLocalDate(media);
+    expect([...groups.keys()].sort()).toEqual(["2025-02-10", "2025-02-12"]);
+  });
+});
+
+describe("station time zone lookup", () => {
+  it("resolves each station's display time zone from its media", () => {
+    expect(getStationTimeZone("STN-MIRRIGAN")).toBe("Australia/Perth");
+    expect(getStationTimeZone("STN-TALWARRA")).toBe("Australia/Brisbane");
+  });
+
+  it("returns undefined for a station with no media", () => {
+    expect(getStationTimeZone("STN-DOES-NOT-EXIST")).toBeUndefined();
   });
 });
 

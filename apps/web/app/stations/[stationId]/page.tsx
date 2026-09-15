@@ -5,25 +5,19 @@ import { notFound } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { MetadataList } from "@/components/ui/metadata-list";
+import { ObservationThumbnail } from "@/components/ui/observation-thumbnail";
 import { SectionHeading } from "@/components/ui/section-heading";
-import { Skeleton } from "@/components/ui/skeleton";
-import { StatusLabel, type StatusTone } from "@/components/ui/status-label";
+import { StatusLabel } from "@/components/ui/status-label";
 import {
   getCamerasForStation,
   getMediaForCamera,
   getMediaForStation,
   getStationById,
   sortMediaByCaptureTime,
-  type MediaItem,
-  type MediaType,
-  type PublicationStatus,
 } from "@/data";
 import { formatCoordinates, formatLocalDateTime, formatOperationalDate } from "@/lib/format";
-import {
-  getOperatingStatusTone,
-  getProcessingStatusTone,
-  getPublicationStatusTone,
-} from "@/lib/status-tone";
+import { formatMediaTypeLabel } from "@/lib/observation-badge";
+import { getOperatingStatusTone } from "@/lib/status-tone";
 
 const LATEST_OBSERVATIONS_LIMIT = 6;
 
@@ -33,31 +27,6 @@ export async function generateMetadata({
   const { stationId } = await params;
   const station = getStationById(stationId);
   return { title: station ? station.name : "Station not found" };
-}
-
-function formatMediaTypeLabel(type: MediaType): string {
-  return type === "timelapse" ? "Time-lapse" : type.charAt(0).toUpperCase() + type.slice(1);
-}
-
-function formatPublicationLabel(status: PublicationStatus): string {
-  return status.charAt(0).toUpperCase() + status.slice(1).replace("-", " ");
-}
-
-/** Only surfaces a badge when there's something worth flagging; ordinary public, processed items stay unbadged. */
-function getObservationBadge(item: MediaItem): { label: string; tone: StatusTone } | null {
-  if (item.processingStatus === "processing") {
-    return { label: "Processing", tone: getProcessingStatusTone(item.processingStatus) };
-  }
-  if (item.processingStatus === "failed") {
-    return { label: "Failed", tone: getProcessingStatusTone(item.processingStatus) };
-  }
-  if (item.publicationStatus !== "public") {
-    return {
-      label: formatPublicationLabel(item.publicationStatus),
-      tone: getPublicationStatusTone(item.publicationStatus),
-    };
-  }
-  return null;
 }
 
 export default async function StationDetailPage({
@@ -121,10 +90,10 @@ export default async function StationDetailPage({
           </p>
 
           <div className="mt-8 flex flex-wrap items-center gap-3">
-            <Button disabled title="The full archive view is still being built.">
+            <Button href={`/stations/${station.id}/archive`}>
               Browse station archive
+              <span aria-hidden="true">&rarr;</span>
             </Button>
-            <StatusLabel label="Archive view in development" tone="caution" />
           </div>
         </div>
 
@@ -208,42 +177,18 @@ export default async function StationDetailPage({
           />
         ) : (
           <div className="mt-8 grid grid-cols-2 gap-6 sm:grid-cols-3">
-            {latestObservations.map((item) => {
-              const badge = getObservationBadge(item);
-              return (
-                <div key={item.id} className="border-t border-border pt-3">
-                  <div className="relative aspect-[4/3] overflow-hidden bg-border/40">
-                    {item.thumbnailUrl ? (
-                      <Image
-                        src={item.thumbnailUrl}
-                        alt={item.altText}
-                        fill
-                        sizes="(min-width: 640px) 33vw, 50vw"
-                        className="object-cover"
-                      />
-                    ) : item.processingStatus === "processing" ? (
-                      <Skeleton className="absolute inset-0" />
-                    ) : (
-                      <div className="absolute inset-0 flex items-center justify-center px-2 text-center text-meta uppercase tracking-label text-muted">
-                        Unavailable
-                      </div>
-                    )}
-                    {badge && (
-                      <span className="absolute left-2 top-2 bg-surface/90 px-2 py-1">
-                        <StatusLabel label={badge.label} tone={badge.tone} />
-                      </span>
-                    )}
-                  </div>
-                  <p className="mt-2 text-small font-medium text-foreground">
-                    {formatMediaTypeLabel(item.mediaType)}
-                  </p>
-                  <p className="mt-1 text-meta uppercase tracking-label text-muted">
-                    {formatLocalDateTime(item.capturedAtUtc, item.displayTimeZone)}
-                  </p>
-                  <p className="mt-1 text-small text-muted">{item.caption}</p>
-                </div>
-              );
-            })}
+            {latestObservations.map((item) => (
+              <div key={item.id} className="border-t border-border pt-3">
+                <ObservationThumbnail item={item} sizes="(min-width: 640px) 33vw, 50vw" />
+                <p className="mt-2 text-small font-medium text-foreground">
+                  {formatMediaTypeLabel(item.mediaType)}
+                </p>
+                <p className="mt-1 text-meta uppercase tracking-label text-muted">
+                  {formatLocalDateTime(item.capturedAtUtc, item.displayTimeZone)}
+                </p>
+                <p className="mt-1 text-small text-muted">{item.caption}</p>
+              </div>
+            ))}
           </div>
         )}
       </section>

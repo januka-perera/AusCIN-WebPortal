@@ -1,4 +1,5 @@
-import type { Camera, MediaItem, MediaType, Station } from "./types/media";
+import { getLocalDateKey, getLocalMinutesOfDay } from "@/lib/format";
+import type { Camera, MediaItem, MediaType, ProcessingStatus, PublicationStatus, Station } from "./types/media";
 import { CAMERAS, MEDIA, STATIONS } from "./sample";
 
 /**
@@ -72,4 +73,69 @@ export function getRelatedMedia(mediaId: string, media: MediaItem[] = MEDIA): Me
   return item.relatedMediaIds
     .map((relatedId) => byId.get(relatedId))
     .filter((related): related is MediaItem => related !== undefined);
+}
+
+export function filterMediaByProcessingStatus(
+  media: MediaItem[],
+  status: ProcessingStatus,
+): MediaItem[] {
+  return media.filter((item) => item.processingStatus === status);
+}
+
+export function filterMediaByPublicationStatus(
+  media: MediaItem[],
+  status: PublicationStatus,
+): MediaItem[] {
+  return media.filter((item) => item.publicationStatus === status);
+}
+
+/**
+ * Filters to items whose local calendar date (in each item's own
+ * displayTimeZone) matches the given "YYYY-MM-DD" key. Timezone-aware,
+ * so it correctly handles a local day that spans two UTC calendar dates.
+ */
+export function filterMediaByLocalDate(media: MediaItem[], localDateKey: string): MediaItem[] {
+  return media.filter(
+    (item) => getLocalDateKey(item.capturedAtUtc, item.displayTimeZone) === localDateKey,
+  );
+}
+
+/**
+ * Filters to items whose local time-of-day (minutes since local
+ * midnight) falls within [startMinutes, endMinutes]. When startMinutes
+ * is greater than endMinutes, the range is treated as wrapping past
+ * local midnight (e.g. a "night" window of 21:00-04:59).
+ */
+export function filterMediaByTimeOfDay(
+  media: MediaItem[],
+  startMinutes: number,
+  endMinutes: number,
+): MediaItem[] {
+  return media.filter((item) => {
+    const minutes = getLocalMinutesOfDay(item.capturedAtUtc, item.displayTimeZone);
+    if (startMinutes <= endMinutes) {
+      return minutes >= startMinutes && minutes <= endMinutes;
+    }
+    return minutes >= startMinutes || minutes <= endMinutes;
+  });
+}
+
+/** Groups media by local calendar date (each item's own displayTimeZone), preserving input order within each group. */
+export function groupMediaByLocalDate(media: MediaItem[]): Map<string, MediaItem[]> {
+  const groups = new Map<string, MediaItem[]>();
+  for (const item of media) {
+    const key = getLocalDateKey(item.capturedAtUtc, item.displayTimeZone);
+    const existing = groups.get(key);
+    if (existing) {
+      existing.push(item);
+    } else {
+      groups.set(key, [item]);
+    }
+  }
+  return groups;
+}
+
+/** The IANA time zone a station's observations are displayed in, derived from its media records. */
+export function getStationTimeZone(stationId: string, media: MediaItem[] = MEDIA): string | undefined {
+  return media.find((item) => item.stationId === stationId)?.displayTimeZone;
 }
