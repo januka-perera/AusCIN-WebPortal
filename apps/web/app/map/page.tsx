@@ -6,7 +6,9 @@ import { StatusLabel } from "@/components/ui/status-label";
 import { getAllStations, getCamerasForStation, getMediaForStation, type Station } from "@/data";
 import { getOperatingStatusTone } from "@/lib/status-tone";
 import { applyMapFilters, countActiveFilters, hasActiveFilters, parseMapFilters, type SearchParams } from "./filters";
-import { latitudeTicks, longitudeTicks, projectToPercent } from "./geo";
+import { MapLoader } from "./map-loader";
+import { resolveTileConfig } from "./tile-config";
+import type { MapStationSummary } from "./types";
 
 export const metadata: Metadata = {
   title: "Map",
@@ -17,13 +19,6 @@ const controlClassName =
 const labelClassName = "flex flex-col gap-1 text-small text-foreground";
 
 const OPERATING_STATUSES = ["active", "offline", "maintenance"] as const;
-
-function markerToneClass(tone: ReturnType<typeof getOperatingStatusTone>): string {
-  // Active stations get a solid fill; anything else a hollow ring — a shape
-  // difference as well as a colour one, so status isn't colour-only.
-  if (tone === "positive") return "border-accent bg-accent";
-  return "border-secondary-accent bg-surface";
-}
 
 export default async function MapPage({ searchParams }: PageProps<"/map">) {
   const search: SearchParams = await searchParams;
@@ -43,8 +38,23 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
     ...(filters.status ? [filters.status] : []),
   ];
 
-  const latTicks = latitudeTicks();
-  const lonTicks = longitudeTicks();
+  const tileConfig = resolveTileConfig(
+    process.env.NEXT_PUBLIC_MAP_TILE_URL,
+    process.env.NEXT_PUBLIC_MAP_TILE_ATTRIBUTION,
+  );
+
+  const mapStations: MapStationSummary[] = filtered.map((station) => ({
+    id: station.id,
+    name: station.name,
+    state: station.state,
+    region: station.region,
+    latitude: station.latitude,
+    longitude: station.longitude,
+    operationalStatus: station.operationalStatus,
+    tone: getOperatingStatusTone(station.operationalStatus),
+    cameraCount: getCamerasForStation(station.id).length,
+    mediaCount: getMediaForStation(station.id).length,
+  }));
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-16">
@@ -132,75 +142,26 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
         />
       ) : (
         <>
-          <div className="mt-10 mx-auto max-w-2xl">
-            <div
-              className="relative aspect-[42/34] w-full border border-border bg-accent/5"
-              role="group"
-              aria-label="Map of Australia showing sample AusCIN station locations"
-            >
-              {/* Gridlines and edge labels: a plain latitude/longitude plot, not a decorative map. */}
-              {latTicks.map((lat) => {
-                const { yPercent } = projectToPercent(lat, 112);
-                return (
-                  <div key={lat} className="absolute inset-x-0" style={{ top: `${yPercent}%` }}>
-                    <div className="border-t border-border/70" />
-                    <span className="absolute left-1 top-1 text-meta text-muted">{Math.abs(lat)}&deg;S</span>
-                  </div>
-                );
-              })}
-              {lonTicks.map((lon) => {
-                const { xPercent } = projectToPercent(-10, lon);
-                return (
-                  <div key={lon} className="absolute inset-y-0" style={{ left: `${xPercent}%` }}>
-                    <div className="h-full border-l border-border/70" />
-                    <span className="absolute bottom-1 left-1 text-meta text-muted">{lon}&deg;E</span>
-                  </div>
-                );
-              })}
-
-              <span className="absolute left-1 top-1/2 -translate-y-1/2 -rotate-90 text-meta uppercase tracking-label text-muted">
-                Indian Ocean
-              </span>
-              <span className="absolute right-1 top-1/2 -translate-y-1/2 rotate-90 text-meta uppercase tracking-label text-muted">
-                Pacific Ocean
-              </span>
-              <span className="absolute right-1 top-1 text-meta uppercase tracking-label text-muted">
-                Arafura Sea
-              </span>
-
-              {filtered.map((station) => {
-                const { xPercent, yPercent } = projectToPercent(station.latitude, station.longitude);
-                const tone = getOperatingStatusTone(station.operationalStatus);
-                const cameraCount = getCamerasForStation(station.id).length;
-                const mediaCount = getMediaForStation(station.id).length;
-                return (
-                  <div
-                    key={station.id}
-                    className="group absolute z-10 -translate-x-1/2 -translate-y-1/2"
-                    style={{ left: `${xPercent}%`, top: `${yPercent}%` }}
-                  >
-                    <Link
-                      href={`/stations/${station.id}`}
-                      aria-label={`${station.name}, ${station.state}, ${station.region}. Status: ${station.operationalStatus}. ${cameraCount} cameras, ${mediaCount} observations.`}
-                      className={`block h-3.5 w-3.5 rounded-full border-2 ${markerToneClass(tone)}`}
-                    />
-                    <div
-                      className="pointer-events-none absolute left-1/2 top-full z-20 mt-2 hidden w-52 -translate-x-1/2 border border-border bg-surface p-3 text-left group-hover:block group-focus-within:block"
-                      aria-hidden="true"
-                    >
-                      <p className="text-small font-medium text-foreground">{station.name}</p>
-                      <p className="mt-1 text-meta uppercase tracking-label text-muted">
-                        {station.state} &middot; {station.region}
-                      </p>
-                      <p className="mt-1 text-meta uppercase tracking-label text-muted">
-                        {station.operationalStatus} &middot; {cameraCount} cameras &middot; {mediaCount}{" "}
-                        observations
-                      </p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+          <div className="mt-10">
+            {tileConfig.available ? (
+              <MapLoader
+                key={mapStations.map((station) => station.id).join(",")}
+                stations={mapStations}
+                tileConfig={tileConfig}
+              />
+            ) : (
+              <EmptyState
+                title="Map unavailable"
+                description="No basemap tile source is configured for this preview. All matching stations are listed below."
+              />
+            )}
+            {tileConfig.available && tileConfig.isDevDefault && (
+              <p className="mt-2 text-meta text-muted">
+                Uses OpenStreetMap&apos;s public tile server for local development only &mdash; set{" "}
+                <code>NEXT_PUBLIC_MAP_TILE_URL</code> to an approved tile provider before any
+                production deployment.
+              </p>
+            )}
             <p className="mt-3 flex flex-wrap items-center gap-4 text-meta uppercase tracking-label text-muted">
               <span className="flex items-center gap-2">
                 <span className="h-2.5 w-2.5 rounded-full border-2 border-accent bg-accent" aria-hidden="true" />
@@ -213,10 +174,6 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
                 />
                 Offline / maintenance
               </span>
-            </p>
-            <p className="mt-2 text-meta text-muted">
-              Bounded by the Indian Ocean to the west, the Pacific Ocean to the east, the Arafura
-              Sea to the north and the Southern Ocean to the south.
             </p>
           </div>
 
@@ -239,7 +196,10 @@ function StationRow({ station }: { station: Station }) {
   const mediaCount = getMediaForStation(station.id).length;
 
   return (
-    <li className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2 py-4">
+    <li
+      id={`station-${station.id}`}
+      className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2 py-4 [&:target]:bg-accent/5"
+    >
       <div className="min-w-0">
         <Link
           href={`/stations/${station.id}`}

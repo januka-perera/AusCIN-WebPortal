@@ -1,0 +1,44 @@
+/*
+ * Restrained overrides so Leaflet's default chrome matches the AusCIN
+ * design tokens instead of its own bundled sans-serif font, rounded
+ * popup corners and default marker box.
+ */
+
+.leaflet-container {
+  font-family: var(--font-sans);
+  background: var(--color-background);
+}
+
+.leaflet-div-icon.auscin-marker-icon,
+.auscin-marker-icon {
+  background: transparent;
+  border: none;
+}
+
+.auscin-marker-dot {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  border-width: 2px;
+  border-style: solid;
+}
+
+.leaflet-popup-content-wrapper {
+  border-radius: var(--radius-sm);
+  box-shadow: 0 1px 4px rgba(27, 31, 34, 0.2);
+  color: var(--color-foreground);
+}
+
+.leaflet-popup-content {
+  margin: 12px 14px;
+  font-family: var(--font-sans);
+}
+
+.leaflet-popup-content a {
+  text-decoration: none;
+}
+
+.leaflet-popup-tip {
+  box-shadow: none;
+}
