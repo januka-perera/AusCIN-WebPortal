@@ -1,6 +1,17 @@
 import Image from "next/image";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { ObservationThumbnail } from "@/components/ui/observation-thumbnail";
 import { SectionHeading } from "@/components/ui/section-heading";
+import {
+  getAllCameras,
+  getAllStations,
+  getLatestObservationPerStation,
+  type Camera,
+  type Station,
+} from "@/data";
+import { formatLocalDateTime } from "@/lib/format";
+import { formatMediaTypeLabel } from "@/lib/observation-badge";
 import { SITE_NAME, SITE_TAGLINE } from "@/lib/site-config";
 
 const capabilities = [
@@ -27,6 +38,12 @@ const capabilities = [
 ];
 
 export default function Home() {
+  const stations = getAllStations();
+  const cameras = getAllCameras();
+  const stationById = new Map<string, Station>(stations.map((station) => [station.id, station]));
+  const cameraById = new Map<string, Camera>(cameras.map((camera) => [camera.id, camera]));
+  const latestObservations = getLatestObservationPerStation();
+
   return (
     <>
       <section className="border-b border-border bg-surface">
@@ -82,6 +99,44 @@ export default function Home() {
           </dl>
         </div>
       </section>
+
+      {latestObservations.length > 0 && (
+        <section className="border-b border-border">
+          <div className="mx-auto max-w-6xl px-6 py-16 sm:py-20">
+            <SectionHeading
+              eyebrow="Latest observations"
+              title="Recent captures across the network"
+              description="One current observation from each station, newest first."
+              action={{ label: "Browse all observations", href: "/observations" }}
+            />
+            <ul className="mt-6 divide-y divide-border">
+              {latestObservations.map((item) => {
+                const station = stationById.get(item.stationId);
+                const camera = cameraById.get(item.cameraId);
+                return (
+                  <li key={item.id}>
+                    <Link
+                      href={`/stations/${item.stationId}/archive/${item.id}`}
+                      className="flex items-center gap-4 py-4"
+                    >
+                      <ObservationThumbnail item={item} sizes="80px" aspectClassName="h-16 w-20 shrink-0" />
+                      <span className="min-w-0">
+                        <span className="block text-small font-medium text-foreground">
+                          {station?.name ?? item.stationId}
+                        </span>
+                        <span className="mt-1 block text-meta uppercase tracking-label text-muted">
+                          {camera?.name ?? item.cameraId} &middot; {formatMediaTypeLabel(item.mediaType)}{" "}
+                          &middot; {formatLocalDateTime(item.capturedAtUtc, item.displayTimeZone)}
+                        </span>
+                      </span>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        </section>
+      )}
 
       <section>
         <div className="mx-auto grid max-w-6xl gap-8 px-6 py-16 sm:py-20 lg:grid-cols-[2fr_3fr] lg:gap-16">

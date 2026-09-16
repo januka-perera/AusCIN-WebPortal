@@ -1,6 +1,6 @@
 import {
-  filterMediaByDateRange,
   filterMediaByLocalDate,
+  filterMediaByLocalDateRange,
   filterMediaByProcessingStatus,
   filterMediaByPublicationStatus,
   filterMediaByTimeOfDay,
@@ -89,11 +89,10 @@ export function applyArchiveFilters(media: MediaItem[], filters: ArchiveFilters)
   if (filters.date) {
     result = filterMediaByLocalDate(result, filters.date);
   } else if (filters.from || filters.to) {
-    result = filterMediaByDateRange(
-      result,
-      filters.from ? `${filters.from}T00:00:00.000Z` : "0001-01-01T00:00:00.000Z",
-      filters.to ? `${filters.to}T23:59:59.999Z` : "9999-12-31T23:59:59.999Z",
-    );
+    // Timezone-aware: compares each item's own local calendar date, not a
+    // fixed UTC instant window, so it stays correct regardless of the
+    // station's UTC offset. See data/queries.ts for details.
+    result = filterMediaByLocalDateRange(result, filters.from, filters.to);
   }
   if (filters.timeOfDay) {
     result = filterMediaByTimeOfDay(result, filters.timeOfDay.startMinutes, filters.timeOfDay.endMinutes);
@@ -114,6 +113,18 @@ export function hasActiveFilters(filters: ArchiveFilters): boolean {
       filters.processingStatus ||
       filters.publicationStatus,
   );
+}
+
+/** Counts active filters as logical groups (a date + a range together still count once), for a compact mobile summary. */
+export function countActiveFilters(filters: ArchiveFilters): number {
+  let count = 0;
+  if (filters.camera) count += 1;
+  if (filters.mediaType) count += 1;
+  if (filters.date || filters.from || filters.to) count += 1;
+  if (filters.timeOfDay) count += 1;
+  if (filters.processingStatus) count += 1;
+  if (filters.publicationStatus) count += 1;
+  return count;
 }
 
 export type FilterParamState = {

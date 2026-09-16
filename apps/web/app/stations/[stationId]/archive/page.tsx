@@ -23,6 +23,7 @@ import {
   applyArchiveFilters,
   buildArchiveHref,
   buildMediaDetailHref,
+  countActiveFilters,
   filtersToParamState,
   firstParam,
   hasActiveFilters,
@@ -66,6 +67,7 @@ export default async function StationArchivePage({
   const filters = parseArchiveFilters(search, cameras);
   const filtered = applyArchiveFilters(allStationMedia, filters);
   const activeFilters = hasActiveFilters(filters);
+  const activeFilterCount = countActiveFilters(filters);
   const paramState = filtersToParamState(filters);
   const summaryParts = summariseFilters(filters);
 
@@ -114,9 +116,9 @@ export default async function StationArchivePage({
         station&apos;s local time zone.
       </p>
 
-      <details className="mt-10 border-t border-b border-border" open>
+      <details className="mt-10 border-t border-b border-border" open={activeFilters}>
         <summary className="cursor-pointer select-none py-4 text-small font-medium text-foreground">
-          Filters
+          Filters{activeFilterCount > 0 ? ` (${activeFilterCount} active)` : ""}
         </summary>
         <form method="get" action={`/stations/${station.id}/archive`} className="pb-6">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
