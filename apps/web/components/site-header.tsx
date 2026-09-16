@@ -7,7 +7,7 @@ import { SITE_NAME, SITE_TAGLINE } from "@/lib/site-config";
 
 const primaryNavLinks = [
   { href: "/stations", label: "Stations" },
-  { href: "/archive", label: "Archive" },
+  { href: "/observations", label: "Archive" },
   { href: "/map", label: "Map" },
   { href: "/research", label: "Research" },
   { href: "/about", label: "About" },
