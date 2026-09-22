@@ -4,6 +4,10 @@
  * for a prototype than a free-form minute picker, and lines up with the
  * morning/midday/afternoon/sunset/night rhythm already used to caption
  * the sample observations. Covers the full 24 hours with no gaps.
+ *
+ * Shared by the station archive and the cross-station observations page
+ * (both filter by time of day using the same vocabulary), so it lives
+ * under lib/ rather than inside either route.
  */
 
 export type TimeOfDayKey = "morning" | "midday" | "afternoon" | "evening" | "night";

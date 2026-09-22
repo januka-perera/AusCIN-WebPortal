@@ -1,9 +1,11 @@
 import type { Camera } from "../types/media";
 
 /**
- * Two cameras per station (see stations.ts). Kestrel Head's second
- * camera is deliberately "offline" to exercise that edge case in the
- * interface; every other camera is active.
+ * Two cameras per station for the original six stations (see
+ * stations.ts), plus one newly commissioned camera at Pelican Reach.
+ * Kestrel Head's second camera is deliberately "offline" and Pelican
+ * Reach's only camera is "maintenance" (and has no captures yet — see
+ * media.ts), so the interface exercises more than one camera status.
  */
 export const CAMERAS: Camera[] = [
   // Seaglass Point (NSW)
@@ -136,5 +138,18 @@ export const CAMERAS: Camera[] = [
     viewDirection: "N",
     captureIntervalMinutes: 15,
     status: "active",
+  },
+
+  // Pelican Reach (NT) — newly commissioned; camera is still being
+  // calibrated and has not recorded a capture yet (see media.ts).
+  {
+    id: "STN-PELICAN-CAM1",
+    stationId: "STN-PELICAN",
+    name: "Pelican Reach — North",
+    type: "fixed",
+    resolution: { width: 1920, height: 1080 },
+    viewDirection: "N",
+    captureIntervalMinutes: 30,
+    status: "maintenance",
   },
 ];

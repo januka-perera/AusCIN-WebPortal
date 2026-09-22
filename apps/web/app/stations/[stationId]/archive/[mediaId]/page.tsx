@@ -6,17 +6,7 @@ import { Button } from "@/components/ui/button";
 import { MetadataList } from "@/components/ui/metadata-list";
 import { ObservationThumbnail } from "@/components/ui/observation-thumbnail";
 import { StatusLabel } from "@/components/ui/status-label";
-import {
-  getAdjacentMedia,
-  getCamerasForStation,
-  getMediaById,
-  getMediaForCamera,
-  getMediaForStation,
-  getRelatedMedia,
-  getStationById,
-  sortMediaByCaptureTime,
-  type Camera,
-} from "@/data";
+import { getAdjacentMedia, getMediaForCamera, repository, sortMediaByCaptureTime, type Camera } from "@/data";
 import {
   formatCoordinates,
   formatFileSize,
@@ -24,10 +14,10 @@ import {
   formatLocalTime,
   formatUtcTimestamp,
 } from "@/lib/format";
+import { getMediaAccessState, getPreviewAvailability, type PreviewAvailability } from "@/lib/media-access";
 import { formatMediaTypeLabel, formatPublicationLabel } from "@/lib/observation-badge";
 import { getProcessingStatusTone, getPublicationStatusTone } from "@/lib/status-tone";
 import {
-  applyArchiveFilters,
   buildArchiveHref,
   buildMediaDetailHref,
   filtersToParamState,
@@ -39,17 +29,17 @@ export async function generateMetadata({
   params,
 }: PageProps<"/stations/[stationId]/archive/[mediaId]">): Promise<Metadata> {
   const { stationId, mediaId } = await params;
-  const station = getStationById(stationId);
-  const item = station ? getMediaById(mediaId, getMediaForStation(station.id)) : undefined;
+  const station = await repository.getStation(stationId);
+  const item = station ? await repository.getMediaItem(station.id, mediaId) : undefined;
   if (!station || !item) return { title: "Observation not found" };
   return { title: `${formatMediaTypeLabel(item.mediaType)} — ${station.name}` };
 }
 
-function unavailableReason(processingStatus: string): string {
-  if (processingStatus === "processing") {
+function unavailableReason(previewAvailability: PreviewAvailability): string {
+  if (previewAvailability === "processing") {
     return "This observation is still processing. A preview isn't available yet.";
   }
-  if (processingStatus === "failed") {
+  if (previewAvailability === "failed") {
     return "This capture failed. No preview is available for this observation.";
   }
   return "No preview is available for this observation.";
@@ -61,29 +51,32 @@ export default async function MediaDetailPage({
 }: PageProps<"/stations/[stationId]/archive/[mediaId]">) {
   const { stationId, mediaId } = await params;
   const search: SearchParams = await searchParams;
-  const station = getStationById(stationId);
+  const station = await repository.getStation(stationId);
 
   if (!station) {
     notFound();
   }
 
-  const allStationMedia = getMediaForStation(station.id);
-  const item = getMediaById(mediaId, allStationMedia);
+  const item = await repository.getMediaItem(station.id, mediaId);
 
   if (!item) {
     notFound();
   }
 
-  const cameras = getCamerasForStation(station.id);
+  const cameras = await repository.listCamerasForStation(station.id);
   const cameraById = new Map<string, Camera>(cameras.map((camera) => [camera.id, camera]));
   const camera = cameraById.get(item.cameraId);
 
   const filters = parseArchiveFilters(search, cameras);
   const paramState = filtersToParamState(filters);
-  const filteredSorted = sortMediaByCaptureTime(applyArchiveFilters(allStationMedia, filters), "asc");
+  const [allStationMedia, filteredMedia] = await Promise.all([
+    repository.listStationObservations(station.id, {}),
+    repository.listStationObservations(station.id, filters),
+  ]);
+  const filteredSorted = sortMediaByCaptureTime(filteredMedia, "asc");
   const { previous, next } = getAdjacentMedia(filteredSorted, item.id);
 
-  let relatedItems = getRelatedMedia(item.id, allStationMedia);
+  let relatedItems = await repository.getRelatedMediaItems(station.id, item.id);
   let relatedHeading = "Related media";
   if (relatedItems.length === 0) {
     const cameraSorted = sortMediaByCaptureTime(getMediaForCamera(item.cameraId, allStationMedia), "asc");
@@ -95,6 +88,8 @@ export default async function MediaDetailPage({
   }
 
   const previewSrc = item.previewUrl ?? item.thumbnailUrl;
+  const previewAvailability = getPreviewAvailability(item);
+  const mediaAccessState = getMediaAccessState(item);
   const isTimelapse = item.mediaType === "timelapse";
 
   return (
@@ -135,7 +130,7 @@ export default async function MediaDetailPage({
               />
             ) : (
               <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-small text-muted">
-                {unavailableReason(item.processingStatus)}
+                {unavailableReason(previewAvailability)}
               </div>
             )}
             <span className="absolute left-3 top-3 bg-surface/90 px-2 py-1 text-meta uppercase tracking-label text-foreground">
@@ -194,9 +189,9 @@ export default async function MediaDetailPage({
 
           <h2 className="mt-8 font-display text-heading-md text-foreground">Data access</h2>
           <div className="mt-3">
-            {item.originalUrl ? (
-              <Button href={item.originalUrl}>Download original</Button>
-            ) : item.publicationStatus === "restricted" ? (
+            {mediaAccessState === "original-available" ? (
+              <Button href={item.originalUrl as string}>Download original</Button>
+            ) : mediaAccessState === "restricted" ? (
               <>
                 <StatusLabel label="Download restricted" tone="restricted" />
                 <p className="mt-2 max-w-sm text-small text-muted">

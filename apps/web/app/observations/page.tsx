@@ -3,18 +3,10 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ObservationThumbnail } from "@/components/ui/observation-thumbnail";
-import {
-  getAllCameras,
-  getAllMedia,
-  getAllStations,
-  sortMediaByCaptureTime,
-  type Camera,
-  type Station,
-} from "@/data";
+import { repository, type Camera, type Station } from "@/data";
 import { formatLocalDateTime } from "@/lib/format";
 import { formatMediaTypeLabel, formatPublicationLabel } from "@/lib/observation-badge";
 import {
-  applyObservationFilters,
   buildObservationsHref,
   countActiveFilters,
   filtersToParamState,
@@ -42,9 +34,7 @@ export default async function ObservationsPage({
 }: PageProps<"/observations">) {
   const search: SearchParams = await searchParams;
 
-  const stations = getAllStations();
-  const cameras = getAllCameras();
-  const allMedia = getAllMedia();
+  const [stations, cameras] = await Promise.all([repository.listStations(), repository.listCameras()]);
   const stationById = new Map<string, Station>(stations.map((station) => [station.id, station]));
   const cameraById = new Map<string, Camera>(cameras.map((camera) => [camera.id, camera]));
 
@@ -52,7 +42,6 @@ export default async function ObservationsPage({
   const availableRegions = [...new Set(stations.map((station) => station.region))].sort();
 
   const filters = parseObservationFilters(search, stations, cameras);
-  const filtered = sortMediaByCaptureTime(applyObservationFilters(allMedia, filters, stations), "desc");
   const activeFilters = hasActiveFilters(filters);
   const activeFilterCount = countActiveFilters(filters);
   const paramState = filtersToParamState(filters);
@@ -60,13 +49,15 @@ export default async function ObservationsPage({
 
   const cameraOptions = filters.station ? cameras.filter((camera) => camera.stationId === filters.station!.id) : cameras;
 
-  const totalCount = filtered.length;
-  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
-  const page = Math.min(Math.max(1, filters.page), totalPages);
-  const pageStart = (page - 1) * PAGE_SIZE;
-  const pageItems = filtered.slice(pageStart, pageStart + PAGE_SIZE);
-  const rangeStart = totalCount === 0 ? 0 : pageStart + 1;
-  const rangeEnd = Math.min(pageStart + PAGE_SIZE, totalCount);
+  const {
+    items: pageItems,
+    total: totalCount,
+    page,
+    pageSize,
+    totalPages,
+  } = await repository.listObservations(filters, { page: filters.page, pageSize: PAGE_SIZE });
+  const rangeStart = totalCount === 0 ? 0 : (page - 1) * pageSize + 1;
+  const rangeEnd = Math.min((page - 1) * pageSize + pageSize, totalCount);
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-16">

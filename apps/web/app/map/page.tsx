@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatusLabel } from "@/components/ui/status-label";
-import { getAllStations, getCamerasForStation, getMediaForStation, type Station } from "@/data";
+import { repository, type Station } from "@/data";
 import { getOperatingStatusTone } from "@/lib/status-tone";
 import { applyMapFilters, countActiveFilters, hasActiveFilters, parseMapFilters, type SearchParams } from "./filters";
 import { MapLoader } from "./map-loader";
@@ -22,7 +22,7 @@ const OPERATING_STATUSES = ["active", "offline", "maintenance"] as const;
 
 export default async function MapPage({ searchParams }: PageProps<"/map">) {
   const search: SearchParams = await searchParams;
-  const stations = getAllStations();
+  const stations = await repository.listStations();
 
   const availableStates = [...new Set(stations.map((station) => station.state))].sort();
   const availableRegions = [...new Set(stations.map((station) => station.region))].sort();
@@ -43,18 +43,20 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
     process.env.NEXT_PUBLIC_MAP_TILE_ATTRIBUTION,
   );
 
-  const mapStations: MapStationSummary[] = filtered.map((station) => ({
-    id: station.id,
-    name: station.name,
-    state: station.state,
-    region: station.region,
-    latitude: station.latitude,
-    longitude: station.longitude,
-    operationalStatus: station.operationalStatus,
-    tone: getOperatingStatusTone(station.operationalStatus),
-    cameraCount: getCamerasForStation(station.id).length,
-    mediaCount: getMediaForStation(station.id).length,
-  }));
+  const mapStations: MapStationSummary[] = await Promise.all(
+    filtered.map(async (station) => ({
+      id: station.id,
+      name: station.name,
+      state: station.state,
+      region: station.region,
+      latitude: station.latitude,
+      longitude: station.longitude,
+      operationalStatus: station.operationalStatus,
+      tone: getOperatingStatusTone(station.operationalStatus),
+      cameraCount: (await repository.listCamerasForStation(station.id)).length,
+      mediaCount: (await repository.listStationObservations(station.id, {})).length,
+    })),
+  );
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-16">
@@ -63,8 +65,8 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
         Coastal observation stations across Australia
       </h1>
       <p className="mt-2 text-meta text-muted">
-        Sample development record &mdash; not an operational AusCIN feed. These six stations are
-        fictional records used to build and test this map.
+        Sample development record &mdash; not an operational AusCIN feed. These {stations.length}{" "}
+        stations are fictional records used to build and test this map.
       </p>
 
       <p className="mt-6 max-w-2xl text-body text-muted">
@@ -191,9 +193,9 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
   );
 }
 
-function StationRow({ station }: { station: Station }) {
-  const cameraCount = getCamerasForStation(station.id).length;
-  const mediaCount = getMediaForStation(station.id).length;
+async function StationRow({ station }: { station: Station }) {
+  const cameraCount = (await repository.listCamerasForStation(station.id)).length;
+  const mediaCount = (await repository.listStationObservations(station.id, {})).length;
 
   return (
     <li

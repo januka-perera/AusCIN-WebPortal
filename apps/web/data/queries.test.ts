@@ -47,9 +47,10 @@ describe("camera lookup", () => {
     expect(getAllCameras()).toHaveLength(CAMERAS.length);
   });
 
-  it("returns exactly two cameras per station", () => {
+  it("returns exactly two cameras per station, except Pelican Reach's single newly commissioned camera", () => {
     for (const station of STATIONS) {
-      expect(getCamerasForStation(station.id)).toHaveLength(2);
+      const expected = station.id === "STN-PELICAN" ? 1 : 2;
+      expect(getCamerasForStation(station.id)).toHaveLength(expected);
     }
   });
 
@@ -72,8 +73,12 @@ describe("media lookup", () => {
     expect(getAllMedia()).toHaveLength(MEDIA.length);
   });
 
-  it("returns at least eight media records for every camera", () => {
+  it("returns at least eight media records for every camera except a newly commissioned one", () => {
     for (const camera of CAMERAS) {
+      if (camera.id === "STN-PELICAN-CAM1") {
+        expect(getMediaForCamera(camera.id)).toEqual([]);
+        continue;
+      }
       expect(getMediaForCamera(camera.id).length).toBeGreaterThanOrEqual(8);
     }
   });
@@ -396,7 +401,13 @@ describe("station time zone lookup", () => {
 describe("latest observation per station", () => {
   it("returns one presentable observation per station, most recent first", () => {
     const latest = getLatestObservationPerStation();
-    expect(latest).toHaveLength(STATIONS.length);
+    const stationsWithMedia = STATIONS.filter((station) =>
+      MEDIA.some((item) => item.stationId === station.id),
+    );
+    // Pelican Reach has no media at all yet, so it is expected to be
+    // skipped here — see the "skips a station with no presentable media"
+    // test below for the general behaviour this exercises.
+    expect(latest).toHaveLength(stationsWithMedia.length);
     expect(latest.every((item) => item.processingStatus === "processed")).toBe(true);
     expect(latest.every((item) => item.publicationStatus === "public")).toBe(true);
     for (let i = 1; i < latest.length; i += 1) {
@@ -446,6 +457,36 @@ describe("edge cases baked into the sample data", () => {
   it("has one offline camera", () => {
     const offline = CAMERAS.filter((camera) => camera.status === "offline");
     expect(offline).toHaveLength(1);
+  });
+
+  it("has at least one station in each operating status: active, offline and maintenance", () => {
+    const statuses = new Set(STATIONS.map((station) => station.operationalStatus));
+    expect(statuses).toEqual(new Set(["active", "offline", "maintenance"]));
+  });
+
+  it("has exactly one station with no observations, whose only camera also has none", () => {
+    const stationsWithNoMedia = STATIONS.filter(
+      (station) => !MEDIA.some((item) => item.stationId === station.id),
+    );
+    expect(stationsWithNoMedia).toHaveLength(1);
+    expect(stationsWithNoMedia[0].id).toBe("STN-PELICAN");
+    const camerasWithNoMedia = CAMERAS.filter(
+      (camera) => !MEDIA.some((item) => item.cameraId === camera.id),
+    );
+    expect(camerasWithNoMedia).toHaveLength(1);
+    expect(camerasWithNoMedia[0].id).toBe("STN-PELICAN-CAM1");
+  });
+
+  it("has a processed-but-embargoed item, independent of the processing-and-embargoed item above", () => {
+    const embargoed = MEDIA.filter((item) => item.publicationStatus === "embargoed");
+    expect(embargoed.some((item) => item.processingStatus === "processing")).toBe(true);
+    expect(embargoed.some((item) => item.processingStatus === "processed")).toBe(true);
+  });
+
+  it("has a processed-but-restricted item, independent of the failed-and-restricted item above", () => {
+    const restricted = MEDIA.filter((item) => item.publicationStatus === "restricted");
+    expect(restricted.some((item) => item.processingStatus === "failed")).toBe(true);
+    expect(restricted.some((item) => item.processingStatus === "processed")).toBe(true);
   });
 
   it("records the same nominal local time as different UTC instants across time zones", () => {

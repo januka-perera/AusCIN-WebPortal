@@ -41,7 +41,6 @@ export interface Station {
   operationalSince: string;
   /** Path to a representative image, served from public/sample-media. */
   representativeImageUrl: string;
-  cameraCount: number;
 }
 
 export interface Camera {

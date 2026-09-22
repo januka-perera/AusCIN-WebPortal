@@ -1,20 +1,22 @@
 import type { Metadata } from "next";
 import { ImageCard } from "@/components/ui/image-card";
 import { SectionHeading } from "@/components/ui/section-heading";
-import { getAllStations, getCamerasForStation, getMediaForStation } from "@/data";
+import { repository } from "@/data";
 import { getOperatingStatusTone } from "@/lib/status-tone";
 
 export const metadata: Metadata = {
   title: "Stations",
 };
 
-/**
- * Minimal data-preview page: confirms the sample station/camera/media
- * data loads and can drive the existing design-system components. Not
- * the final station archive or detail page — those are separate tasks.
- */
-export default function StationsPage() {
-  const stations = getAllStations();
+export default async function StationsPage() {
+  const stations = await repository.listStations();
+  const stationSummaries = await Promise.all(
+    stations.map(async (station) => ({
+      station,
+      cameraCount: (await repository.listCamerasForStation(station.id)).length,
+      mediaCount: (await repository.listStationObservations(station.id, {})).length,
+    })),
+  );
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-16">
@@ -32,30 +34,26 @@ export default function StationsPage() {
           states and time zones.
         </p>
         <p>
-          These six stations are sample development records, not an operational AusCIN feed —
-          useful for testing station, camera and media data before real observation sites are
-          connected.
+          These {stations.length} stations are sample development records, not an operational
+          AusCIN feed — useful for testing station, camera and media data before real observation
+          sites are connected.
         </p>
       </div>
       <div className="mt-10 grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3">
-        {stations.map((station) => {
-          const cameraCount = getCamerasForStation(station.id).length;
-          const mediaCount = getMediaForStation(station.id).length;
-          return (
-            <ImageCard
-              key={station.id}
-              href={`/stations/${station.id}`}
-              src={station.representativeImageUrl}
-              alt={`Representative sample image for ${station.name}`}
-              title={station.name}
-              meta={`${station.region} · ${cameraCount} cameras · ${mediaCount} observations`}
-              status={{
-                label: station.operationalStatus,
-                tone: getOperatingStatusTone(station.operationalStatus),
-              }}
-            />
-          );
-        })}
+        {stationSummaries.map(({ station, cameraCount, mediaCount }) => (
+          <ImageCard
+            key={station.id}
+            href={`/stations/${station.id}`}
+            src={station.representativeImageUrl}
+            alt={`Representative sample image for ${station.name}`}
+            title={station.name}
+            meta={`${station.region} · ${cameraCount} camera${cameraCount === 1 ? "" : "s"} · ${mediaCount} observation${mediaCount === 1 ? "" : "s"}`}
+            status={{
+              label: station.operationalStatus,
+              tone: getOperatingStatusTone(station.operationalStatus),
+            }}
+          />
+        ))}
       </div>
     </div>
   );

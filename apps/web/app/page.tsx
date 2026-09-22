@@ -3,13 +3,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { ObservationThumbnail } from "@/components/ui/observation-thumbnail";
 import { SectionHeading } from "@/components/ui/section-heading";
-import {
-  getAllCameras,
-  getAllStations,
-  getLatestObservationPerStation,
-  type Camera,
-  type Station,
-} from "@/data";
+import { repository, type Camera, type Station } from "@/data";
 import { formatLocalDateTime } from "@/lib/format";
 import { formatMediaTypeLabel } from "@/lib/observation-badge";
 import { SITE_NAME, SITE_TAGLINE } from "@/lib/site-config";
@@ -37,12 +31,14 @@ const capabilities = [
   },
 ];
 
-export default function Home() {
-  const stations = getAllStations();
-  const cameras = getAllCameras();
+export default async function Home() {
+  const [stations, cameras, latestObservations] = await Promise.all([
+    repository.listStations(),
+    repository.listCameras(),
+    repository.listLatestObservationPerStation(),
+  ]);
   const stationById = new Map<string, Station>(stations.map((station) => [station.id, station]));
   const cameraById = new Map<string, Camera>(cameras.map((camera) => [camera.id, camera]));
-  const latestObservations = getLatestObservationPerStation();
 
   return (
     <>

@@ -10,8 +10,10 @@ import { STATIONS } from "./stations";
  * values, so the fixture is stable across runs). A handful of specific
  * records are then adjusted in place to cover the edge cases the
  * interface needs to handle: items still processing, a missing preview,
- * a failed capture, an offline camera, a day with no observations, a
- * time-lapse tied to several images, and same-local-time-different-UTC
+ * a failed capture, an offline camera, a camera and station with no
+ * observations at all, a day skipped for one camera, embargoed and
+ * restricted records independent of processing status, a time-lapse
+ * tied to several images, and same-local-time-different-UTC
  * observations from stations in different time zones.
  */
 
@@ -43,6 +45,7 @@ const STATION_TIME_ZONE: Record<string, string> = {
   "STN-MIRRIGAN": "Australia/Perth",
   "STN-TALWARRA": "Australia/Brisbane",
   "STN-BLUEWATER": "Australia/Hobart",
+  "STN-PELICAN": "Australia/Darwin",
 };
 
 /**
@@ -58,6 +61,7 @@ const UTC_OFFSET_HOURS: Record<string, number> = {
   "Australia/Adelaide": 10.5,
   "Australia/Perth": 8,
   "Australia/Brisbane": 10,
+  "Australia/Darwin": 9.5,
 };
 
 function toUtcIso(localDate: string, localTime: string, timeZone: string): string {
@@ -122,6 +126,9 @@ const SKIP_DATES: Record<string, string[]> = {
   // Edge case: this camera is offline (see cameras.ts) and stopped
   // reporting before the last sample date.
   "STN-KESTREL-CAM2": ["2025-02-12"],
+  // Edge case: a newly commissioned camera (and, since it is Pelican
+  // Reach's only camera, station) with no observations at all yet.
+  "STN-PELICAN-CAM1": [...SAMPLE_DATES],
 };
 
 const STATION_BY_ID: Record<string, Station> = Object.fromEntries(
@@ -262,6 +269,15 @@ applyOverride("STN-BLUEWATER-CAM1-20250212-1900", {
   caption: "Bluewater Spit — North capture from 2025-02-12 sunset failed",
   altText: "Capture failed; no image is available for this observation.",
 });
+
+// Edge case: fully processed but embargoed — demonstrates that
+// processing status and publication status are independent axes (the
+// only other embargoed record above is also still "processing").
+setPublicationStatus("STN-KESTREL-CAM1-20250210-1200", "embargoed");
+
+// Edge case: fully processed but restricted — distinct from the failed
+// capture above, which is restricted for a different reason.
+setPublicationStatus("STN-TALWARRA-CAM2-20250211-1530", "restricted");
 
 /**
  * Edge case: same nominal local time, different UTC instant.

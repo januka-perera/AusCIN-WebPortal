@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { getAllStations } from "@/data";
+import { repository } from "@/data";
 
 export const metadata: Metadata = {
   title: "About",
@@ -66,10 +66,9 @@ const CATALOGUE_STAGES = [
   },
 ];
 
-export default function AboutPage() {
-  const stationNames = getAllStations()
-    .map((station) => station.name)
-    .join(", ");
+export default async function AboutPage() {
+  const stations = await repository.listStations();
+  const stationNames = stations.map((station) => station.name).join(", ");
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-16">

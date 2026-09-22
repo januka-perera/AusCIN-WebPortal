@@ -1,5 +1,5 @@
 import type { OperatingStatus, StateOrTerritory, Station } from "@/data";
-import { firstParam, type SearchParams } from "../stations/[stationId]/archive/filters";
+import { firstParam, type SearchParams } from "@/lib/media-filters";
 
 export { firstParam };
 export type { SearchParams };

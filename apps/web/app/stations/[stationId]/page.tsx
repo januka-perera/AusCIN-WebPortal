@@ -8,13 +8,7 @@ import { MetadataList } from "@/components/ui/metadata-list";
 import { ObservationThumbnail } from "@/components/ui/observation-thumbnail";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusLabel } from "@/components/ui/status-label";
-import {
-  getCamerasForStation,
-  getMediaForCamera,
-  getMediaForStation,
-  getStationById,
-  sortMediaByCaptureTime,
-} from "@/data";
+import { repository, sortMediaByCaptureTime } from "@/data";
 import { formatCoordinates, formatLocalDateTime, formatOperationalDate } from "@/lib/format";
 import { formatMediaTypeLabel } from "@/lib/observation-badge";
 import { getOperatingStatusTone } from "@/lib/status-tone";
@@ -25,7 +19,7 @@ export async function generateMetadata({
   params,
 }: PageProps<"/stations/[stationId]">): Promise<Metadata> {
   const { stationId } = await params;
-  const station = getStationById(stationId);
+  const station = await repository.getStation(stationId);
   return { title: station ? station.name : "Station not found" };
 }
 
@@ -33,14 +27,21 @@ export default async function StationDetailPage({
   params,
 }: PageProps<"/stations/[stationId]">) {
   const { stationId } = await params;
-  const station = getStationById(stationId);
+  const station = await repository.getStation(stationId);
 
   if (!station) {
     notFound();
   }
 
-  const cameras = getCamerasForStation(station.id);
-  const media = getMediaForStation(station.id);
+  const cameras = await repository.listCamerasForStation(station.id);
+  const media = await repository.listStationObservations(station.id, {});
+  const cameraMediaCounts = await Promise.all(
+    cameras.map(async (camera) => ({
+      cameraId: camera.id,
+      count: (await repository.listStationObservations(station.id, { camera })).length,
+    })),
+  );
+  const cameraMediaCountById = new Map(cameraMediaCounts.map(({ cameraId, count }) => [cameraId, count]));
   const latestObservations = sortMediaByCaptureTime(media, "desc").slice(
     0,
     LATEST_OBSERVATIONS_LIMIT,
@@ -85,8 +86,9 @@ export default async function StationDetailPage({
 
           <p className="mt-6 max-w-xl text-body text-muted">
             {station.description} Since {formatOperationalDate(station.operationalSince)}, its{" "}
-            {cameras.length} camera{cameras.length === 1 ? "" : "s"} have logged {media.length}{" "}
-            observation{media.length === 1 ? "" : "s"} for the archive.
+            {cameras.length} camera{cameras.length === 1 ? "" : "s"}{" "}
+            {cameras.length === 1 ? "has" : "have"} logged {media.length} observation
+            {media.length === 1 ? "" : "s"} for the archive.
           </p>
 
           <div className="mt-8 flex flex-wrap items-center gap-3">
@@ -134,7 +136,7 @@ export default async function StationDetailPage({
         ) : (
           <div className="mt-6 grid grid-cols-1 gap-8 sm:grid-cols-2">
             {cameras.map((camera) => {
-              const cameraMediaCount = getMediaForCamera(camera.id).length;
+              const cameraMediaCount = cameraMediaCountById.get(camera.id) ?? 0;
               return (
                 <div key={camera.id} className="border-t border-border pt-4">
                   <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">

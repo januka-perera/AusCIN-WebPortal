@@ -7,20 +7,11 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { MetadataList } from "@/components/ui/metadata-list";
 import { ObservationThumbnail } from "@/components/ui/observation-thumbnail";
 import { StatusLabel } from "@/components/ui/status-label";
-import {
-  getCamerasForStation,
-  getMediaForStation,
-  getRelatedMedia,
-  getStationById,
-  groupMediaByLocalDate,
-  sortMediaByCaptureTime,
-  type Camera,
-} from "@/data";
+import { repository, groupMediaByLocalDate, sortMediaByCaptureTime, type Camera } from "@/data";
 import { formatDayHeading, formatFileSize, formatLocalDateTime, formatLocalTime, formatShortDate } from "@/lib/format";
 import { formatMediaTypeLabel, formatPublicationLabel } from "@/lib/observation-badge";
 import { getProcessingStatusTone, getPublicationStatusTone } from "@/lib/status-tone";
 import {
-  applyArchiveFilters,
   buildArchiveHref,
   buildMediaDetailHref,
   countActiveFilters,
@@ -34,7 +25,7 @@ import {
   summariseFilters,
   type SearchParams,
 } from "./filters";
-import { TIME_OF_DAY_OPTIONS } from "./time-of-day";
+import { TIME_OF_DAY_OPTIONS } from "@/lib/time-of-day";
 
 const controlClassName =
   "w-full rounded-sm border border-border bg-surface px-3 py-2 text-small text-foreground";
@@ -44,7 +35,7 @@ export async function generateMetadata({
   params,
 }: PageProps<"/stations/[stationId]/archive">): Promise<Metadata> {
   const { stationId } = await params;
-  const station = getStationById(stationId);
+  const station = await repository.getStation(stationId);
   return { title: station ? `${station.name} archive` : "Station not found" };
 }
 
@@ -54,18 +45,20 @@ export default async function StationArchivePage({
 }: PageProps<"/stations/[stationId]/archive">) {
   const { stationId } = await params;
   const search: SearchParams = await searchParams;
-  const station = getStationById(stationId);
+  const station = await repository.getStation(stationId);
 
   if (!station) {
     notFound();
   }
 
-  const cameras = getCamerasForStation(station.id);
+  const cameras = await repository.listCamerasForStation(station.id);
   const cameraById = new Map<string, Camera>(cameras.map((camera) => [camera.id, camera]));
-  const allStationMedia = getMediaForStation(station.id);
 
   const filters = parseArchiveFilters(search, cameras);
-  const filtered = applyArchiveFilters(allStationMedia, filters);
+  const [allStationMedia, filtered] = await Promise.all([
+    repository.listStationObservations(station.id, {}),
+    repository.listStationObservations(station.id, filters),
+  ]);
   const activeFilters = hasActiveFilters(filters);
   const activeFilterCount = countActiveFilters(filters);
   const paramState = filtersToParamState(filters);
@@ -82,6 +75,9 @@ export default async function StationArchivePage({
     ? sortMediaByCaptureTime(filtered, "desc")[0]
     : undefined;
   const selectedObservation = explicitSelection ?? defaultSelection;
+  const relatedToSelected = selectedObservation
+    ? await repository.getRelatedMediaItems(station.id, selectedObservation.id)
+    : [];
 
   // --- grouped, chronological results: most recent day first, each day oldest-to-newest ---
   const groups = groupMediaByLocalDate(sortMediaByCaptureTime(filtered, "asc"));
@@ -325,7 +321,7 @@ export default async function StationArchivePage({
                 <div className="mt-4">
                   <p className="text-meta uppercase tracking-label text-muted">Related media</p>
                   <div className="mt-2 flex flex-wrap gap-2">
-                    {getRelatedMedia(selectedObservation.id, allStationMedia).map((related) => (
+                    {relatedToSelected.map((related) => (
                       <Link
                         key={related.id}
                         href={buildArchiveHref(station.id, { ...paramState, selected: related.id })}

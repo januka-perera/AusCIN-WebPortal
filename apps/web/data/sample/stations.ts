@@ -1,10 +1,14 @@
 import type { Station } from "../types/media";
 
 /**
- * Six fictional coastal observation stations used for local development
+ * Seven fictional coastal observation stations used for local development
  * and testing only. Locations are loosely inspired by Australian coastal
  * environments but do not correspond to real AusCIN stations, real
  * precise coordinates, or real monitoring infrastructure.
+ *
+ * Station operating status is deliberately varied (active, offline and
+ * maintenance) so the interface exercises all three states rather than
+ * only ever showing a fully active network.
  */
 export const STATIONS: Station[] = [
   {
@@ -21,7 +25,6 @@ export const STATIONS: Station[] = [
     operationalStatus: "active",
     operationalSince: "2018-03-01",
     representativeImageUrl: "/sample-media/thumbnails/beach-wide.svg",
-    cameraCount: 2,
   },
   {
     id: "STN-KESTREL",
@@ -37,7 +40,6 @@ export const STATIONS: Station[] = [
     operationalStatus: "active",
     operationalSince: "2019-07-15",
     representativeImageUrl: "/sample-media/thumbnails/headland-rocky.svg",
-    cameraCount: 2,
   },
   {
     id: "STN-WINDARA",
@@ -53,7 +55,6 @@ export const STATIONS: Station[] = [
     operationalStatus: "active",
     operationalSince: "2020-01-20",
     representativeImageUrl: "/sample-media/thumbnails/water-calm.svg",
-    cameraCount: 2,
   },
   {
     id: "STN-MIRRIGAN",
@@ -69,7 +70,6 @@ export const STATIONS: Station[] = [
     operationalStatus: "active",
     operationalSince: "2021-05-10",
     representativeImageUrl: "/sample-media/thumbnails/lidar-composite.svg",
-    cameraCount: 2,
   },
   {
     id: "STN-TALWARRA",
@@ -85,7 +85,6 @@ export const STATIONS: Station[] = [
     operationalStatus: "active",
     operationalSince: "2017-11-02",
     representativeImageUrl: "/sample-media/thumbnails/sunset.svg",
-    cameraCount: 2,
   },
   {
     id: "STN-BLUEWATER",
@@ -95,12 +94,33 @@ export const STATIONS: Station[] = [
     longitude: 148.27,
     region: "East Coast, TAS",
     description:
-      "A remote east-coast station with limited connectivity, monitoring a low-energy sandy spit.",
+      "A remote east-coast station with limited connectivity, monitoring a low-energy sandy spit. Currently offline pending a site visit to restore its uplink.",
     viewDirection: "NE",
     elevationMetres: 6,
-    operationalStatus: "active",
+    // Edge case: an offline station. Its archive still holds the media
+    // captured before it went offline, so the historical record remains
+    // browsable even though the station is not currently reporting.
+    operationalStatus: "offline",
     operationalSince: "2022-02-18",
     representativeImageUrl: "/sample-media/thumbnails/night-low-light.svg",
-    cameraCount: 2,
+  },
+  {
+    id: "STN-PELICAN",
+    name: "Pelican Reach",
+    state: "NT",
+    latitude: -12.47,
+    longitude: 130.98,
+    region: "Top End, NT",
+    description:
+      "A newly commissioned Top End station, installed to extend coverage into the Northern Territory. Its camera is being calibrated and has not yet recorded a capture.",
+    viewDirection: "N",
+    elevationMetres: 4,
+    // Edge case: a maintenance station with no observations at all, and
+    // a camera that has never captured anything — exercises both the
+    // "station with no observations" and "camera with no observations"
+    // states without contradicting the "offline" state used above.
+    operationalStatus: "maintenance",
+    operationalSince: "2025-02-01",
+    representativeImageUrl: "/sample-media/thumbnails/beach-wide.svg",
   },
 ];
