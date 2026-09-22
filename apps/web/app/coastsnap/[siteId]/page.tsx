@@ -116,9 +116,10 @@ export default async function CoastSnapSiteDetailPage({
       <section className="mt-16 border-t border-border pt-10">
         <h2 className="font-display text-heading-md text-foreground">Data access</h2>
         <p className="mt-3 max-w-xl text-small text-muted">
-          Original CoastSnap photo downloads are not available in this prototype &mdash; every
-          observation shown here is a synthetic development fixture with no real original file to
-          serve. Once real observations are ingested from Spotteron, downloads here are intended
+          Original CoastSnap photo downloads are not implemented in this prototype. A single
+          observation in the archive is marked as having a download available, using a local
+          placeholder file, purely to demonstrate that interface state &mdash; it is not a real
+          photo. Once real observations are ingested from Spotteron, downloads here are intended
           to follow the same publication-status rules already used across the rest of the
           archive: public, embargoed, project-only or restricted.
         </p>

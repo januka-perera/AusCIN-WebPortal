@@ -1,13 +1,18 @@
+import { paginate } from "@/lib/pagination";
 import {
   getAllCoastSnapSites,
   getCoastSnapObservationById,
+  getCoastSnapObservationForSite,
   getCoastSnapSiteById,
+  getFilteredObservationsForCoastSnapSite,
   getLatestObservationPerCoastSnapSite,
   getObservationDateRangeForSite,
-  getObservationsForCoastSnapSite,
   type CoastSnapObservationDateRange,
+  type CoastSnapObservationFilters,
 } from "./coastsnap-queries";
+import { sortMediaByCaptureTime } from "./queries";
 import type { CoastSnapObservation, CoastSnapSite } from "./types/coastsnap";
+import type { PaginatedResult, PaginationParams } from "./types/api";
 
 /**
  * The CoastSnap frontend area's data-access boundary — the same pattern
@@ -22,8 +27,20 @@ import type { CoastSnapObservation, CoastSnapSite } from "./types/coastsnap";
 export interface CoastSnapRepository {
   listSites(): Promise<CoastSnapSite[]>;
   getSite(siteId: string): Promise<CoastSnapSite | undefined>;
-  listObservationsForSite(siteId: string): Promise<CoastSnapObservation[]>;
+  /** One site's observations matching the given filters. Pass {} (or omit) for the site's full, unfiltered record. */
+  listObservationsForSite(
+    siteId: string,
+    filters?: CoastSnapObservationFilters,
+  ): Promise<CoastSnapObservation[]>;
+  /** A site's filtered observations, one page at a time, newest first. */
+  listObservationsForSitePaginated(
+    siteId: string,
+    filters: CoastSnapObservationFilters,
+    pagination: PaginationParams,
+  ): Promise<PaginatedResult<CoastSnapObservation>>;
   getObservation(observationId: string): Promise<CoastSnapObservation | undefined>;
+  /** Looks up an observation scoped to one site — never resolves an observation that belongs to a different site. */
+  getObservationForSite(siteId: string, observationId: string): Promise<CoastSnapObservation | undefined>;
   /** The single most recent presentable observation from each site that has one. */
   listLatestObservationPerSite(): Promise<CoastSnapObservation[]>;
   /** The earliest and latest observation at a site, or undefined if it has none. */
@@ -39,12 +56,34 @@ class SampleCoastSnapRepository implements CoastSnapRepository {
     return getCoastSnapSiteById(siteId);
   }
 
-  async listObservationsForSite(siteId: string): Promise<CoastSnapObservation[]> {
-    return getObservationsForCoastSnapSite(siteId);
+  async listObservationsForSite(
+    siteId: string,
+    filters: CoastSnapObservationFilters = {},
+  ): Promise<CoastSnapObservation[]> {
+    return getFilteredObservationsForCoastSnapSite(siteId, filters);
+  }
+
+  async listObservationsForSitePaginated(
+    siteId: string,
+    filters: CoastSnapObservationFilters,
+    pagination: PaginationParams,
+  ): Promise<PaginatedResult<CoastSnapObservation>> {
+    const filtered = sortMediaByCaptureTime(
+      getFilteredObservationsForCoastSnapSite(siteId, filters),
+      "desc",
+    );
+    return paginate(filtered, pagination.page, pagination.pageSize);
   }
 
   async getObservation(observationId: string): Promise<CoastSnapObservation | undefined> {
     return getCoastSnapObservationById(observationId);
+  }
+
+  async getObservationForSite(
+    siteId: string,
+    observationId: string,
+  ): Promise<CoastSnapObservation | undefined> {
+    return getCoastSnapObservationForSite(siteId, observationId);
   }
 
   async listLatestObservationPerSite(): Promise<CoastSnapObservation[]> {

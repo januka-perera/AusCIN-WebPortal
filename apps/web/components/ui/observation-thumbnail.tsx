@@ -1,12 +1,20 @@
 import Image from "next/image";
-import type { MediaItem } from "@/data";
+import type { ProcessingStatus, PublicationStatus } from "@/data";
 import { cn } from "@/lib/cn";
 import { getObservationBadge } from "@/lib/observation-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusLabel } from "@/components/ui/status-label";
 
+/** Any observation-shaped record with these fields — deliberately not tied to `MediaItem`, so CoastSnapObservation satisfies this too without either type depending on the other. */
+type ThumbnailFields = {
+  thumbnailUrl: string | null;
+  altText: string;
+  processingStatus: ProcessingStatus;
+  publicationStatus: PublicationStatus;
+};
+
 type ObservationThumbnailProps = {
-  item: MediaItem;
+  item: ThumbnailFields;
   sizes: string;
   /** Tailwind aspect-ratio utility class. Defaults to the gallery-card ratio. */
   aspectClassName?: string;

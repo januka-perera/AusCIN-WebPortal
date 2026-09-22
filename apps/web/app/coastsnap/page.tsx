@@ -67,9 +67,6 @@ export default async function CoastSnapPage() {
             ))}
           </div>
         )}
-        <p className="mt-6 max-w-2xl text-small text-muted">
-          Photo archives and individual observation pages are part of a later development stage.
-        </p>
       </section>
     </div>
   );

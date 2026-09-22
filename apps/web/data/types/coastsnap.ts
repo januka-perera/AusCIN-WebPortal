@@ -81,11 +81,18 @@ export interface CoastSnapObservation {
    * data.
    */
   mediaId: string;
+  /** The Spotteron platform's own identifier for the media asset itself (distinct from the observation ID it belongs to). Undefined until a real ingestion populates it. */
+  spotteronMediaId?: string;
+  /** The asset's URL on Spotteron's own hosting, once ingested. Undefined for every observation in this prototype — never a locally-guessed or fabricated URL. */
+  sourceUrl?: string;
   mediaType: MediaType;
   /** ISO 8601 timestamp in UTC, e.g. "2026-08-01T02:15:00.000Z". */
   capturedAtUtc: string;
   /** IANA time zone used to display capturedAtUtc to visitors. */
   displayTimeZone: string;
+  /** Pixel dimensions, where known. Contributed phone photos can arrive with inconsistent or unknown dimensions, unlike a fixed station camera's fixed resolution, so both are optional. */
+  width?: number;
+  height?: number;
   contributor: CoastSnapContributor;
   processingStatus: ProcessingStatus;
   publicationStatus: PublicationStatus;
@@ -93,8 +100,20 @@ export interface CoastSnapObservation {
   thumbnailUrl: string | null;
   /** Null when a preview could not be generated. */
   previewUrl: string | null;
-  /** Null at this prototype stage: no original files are served yet, and no production download exists to link to. */
+  /**
+   * Whether an original file is available to download. Kept as its own
+   * explicit flag (rather than only inferring availability from
+   * `originalUrl` being non-null) because a future ingested record could
+   * know availability before a real download URL is populated. In this
+   * prototype, true only for a single clearly-labelled mock record used
+   * to exercise the "download available" UI state — see
+   * data/sample/coastsnap-observations.ts.
+   */
+  isOriginalAvailable: boolean;
+  /** The original file's URL when isOriginalAvailable is true. Null otherwise. Never a filesystem or /g/data path. */
   originalUrl: string | null;
+  /** SHA-256 checksum of the original file, once one exists to check. Undefined for every observation in this prototype. */
+  checksumSha256?: string;
   caption: string;
   altText: string;
   /** True for every observation in this prototype: none of this data has come from a real Spotteron ingestion. */
