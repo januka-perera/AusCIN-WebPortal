@@ -3,7 +3,9 @@ import {
   getCoastSnapObservationById,
   getCoastSnapSiteById,
   getLatestObservationPerCoastSnapSite,
+  getObservationDateRangeForSite,
   getObservationsForCoastSnapSite,
+  type CoastSnapObservationDateRange,
 } from "./coastsnap-queries";
 import type { CoastSnapObservation, CoastSnapSite } from "./types/coastsnap";
 
@@ -24,6 +26,8 @@ export interface CoastSnapRepository {
   getObservation(observationId: string): Promise<CoastSnapObservation | undefined>;
   /** The single most recent presentable observation from each site that has one. */
   listLatestObservationPerSite(): Promise<CoastSnapObservation[]>;
+  /** The earliest and latest observation at a site, or undefined if it has none. */
+  getObservationDateRange(siteId: string): Promise<CoastSnapObservationDateRange | undefined>;
 }
 
 class SampleCoastSnapRepository implements CoastSnapRepository {
@@ -45,6 +49,10 @@ class SampleCoastSnapRepository implements CoastSnapRepository {
 
   async listLatestObservationPerSite(): Promise<CoastSnapObservation[]> {
     return getLatestObservationPerCoastSnapSite();
+  }
+
+  async getObservationDateRange(siteId: string): Promise<CoastSnapObservationDateRange | undefined> {
+    return getObservationDateRangeForSite(siteId);
   }
 }
 

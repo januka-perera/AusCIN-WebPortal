@@ -50,3 +50,21 @@ describe("coastSnapRepository.listLatestObservationPerSite", () => {
     expect(latest.some((item) => item.siteId === "CS-SALTMARSH")).toBe(false);
   });
 });
+
+describe("coastSnapRepository.getObservationDateRange", () => {
+  it("finds the earliest and latest observation for a site with several", async () => {
+    const range = await coastSnapRepository.getObservationDateRange("CS-DRIFTWOOD");
+    expect(range).toBeDefined();
+    expect(new Date(range!.earliest.capturedAtUtc).getTime()).toBeLessThanOrEqual(
+      new Date(range!.latest.capturedAtUtc).getTime(),
+    );
+  });
+
+  it("resolves to undefined for a site with no observations", async () => {
+    await expect(coastSnapRepository.getObservationDateRange("CS-SALTMARSH")).resolves.toBeUndefined();
+  });
+
+  it("resolves to undefined for an unknown site ID", async () => {
+    await expect(coastSnapRepository.getObservationDateRange("does-not-exist")).resolves.toBeUndefined();
+  });
+});

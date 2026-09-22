@@ -41,6 +41,13 @@ export function formatCoordinates(latitude: number, longitude: number): string {
   return `${Math.abs(latitude).toFixed(4)}° ${latHemisphere}, ${Math.abs(longitude).toFixed(4)}° ${lonHemisphere}`;
 }
 
+/** e.g. "≈34.4° S, 150.9° E" — a deliberately coarse (one decimal, roughly 11km) location for a catalogue card, not a precise coordinate. */
+export function formatApproximateLocation(latitude: number, longitude: number): string {
+  const latHemisphere = latitude < 0 ? "S" : "N";
+  const lonHemisphere = longitude < 0 ? "W" : "E";
+  return `≈${Math.abs(latitude).toFixed(1)}° ${latHemisphere}, ${Math.abs(longitude).toFixed(1)}° ${lonHemisphere}`;
+}
+
 /**
  * e.g. "2025-02-10" — the local calendar date (in the given time zone) a
  * UTC instant falls on. Used to group and filter observations by the

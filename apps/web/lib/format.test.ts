@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatApproximateLocation,
   formatCoordinates,
   formatDayHeading,
   formatFileSize,
@@ -20,6 +21,16 @@ describe("formatCoordinates", () => {
 
   it("labels northern and western hemispheres for positive/negative inputs", () => {
     expect(formatCoordinates(12.5, -70.25)).toBe("12.5000° N, 70.2500° W");
+  });
+});
+
+describe("formatApproximateLocation", () => {
+  it("rounds to one decimal degree and marks the value as approximate", () => {
+    expect(formatApproximateLocation(-33.45, 151.4)).toBe("≈33.5° S, 151.4° E");
+  });
+
+  it("labels northern and western hemispheres for positive/negative inputs", () => {
+    expect(formatApproximateLocation(12.5, -70.25)).toBe("≈12.5° N, 70.3° W");
   });
 });
 

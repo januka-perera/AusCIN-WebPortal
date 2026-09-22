@@ -44,6 +44,26 @@ export function getCoastSnapObservationById(
   return observations.find((observation) => observation.id === observationId);
 }
 
+export type CoastSnapObservationDateRange = {
+  earliest: CoastSnapObservation;
+  latest: CoastSnapObservation;
+};
+
+/**
+ * The earliest and latest observation captured at a site, regardless of
+ * processing or publication status. Returns undefined for a site with
+ * no observations at all, rather than an invalid or empty-looking range.
+ */
+export function getObservationDateRangeForSite(
+  siteId: string,
+  observations: CoastSnapObservation[] = COASTSNAP_OBSERVATIONS,
+): CoastSnapObservationDateRange | undefined {
+  const siteObservations = getObservationsForCoastSnapSite(siteId, observations);
+  if (siteObservations.length === 0) return undefined;
+  const sorted = sortMediaByCaptureTime(siteObservations, "asc");
+  return { earliest: sorted[0], latest: sorted[sorted.length - 1] };
+}
+
 /**
  * The single most recent presentable (processed and public) observation
  * from each site that has one. Sites with no presentable observations —

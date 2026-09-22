@@ -5,9 +5,11 @@ import {
   getCoastSnapObservationById,
   getCoastSnapSiteById,
   getLatestObservationPerCoastSnapSite,
+  getObservationDateRangeForSite,
   getObservationsForCoastSnapSite,
 } from "./coastsnap-queries";
 import { COASTSNAP_OBSERVATIONS, COASTSNAP_SITES } from "./sample";
+import type { CoastSnapObservation } from "./types/coastsnap";
 
 describe("CoastSnap site lookup", () => {
   it("returns all sample sites", () => {
@@ -30,6 +32,38 @@ describe("CoastSnap site lookup", () => {
     );
     expect(sitesWithNoObservations.length).toBeGreaterThanOrEqual(1);
     expect(COASTSNAP_SITES.some((site) => site.status === "active")).toBe(true);
+  });
+
+  it("produces the exact site-card data the catalogue page renders: name, region, location, status, observation count", () => {
+    const cards = getAllCoastSnapSites().map((site) => ({
+      name: site.name,
+      region: site.region,
+      state: site.state,
+      latitude: site.latitude,
+      longitude: site.longitude,
+      status: site.status,
+      observationCount: getObservationsForCoastSnapSite(site.id).length,
+    }));
+    expect(cards).toEqual([
+      {
+        name: "Driftwood Bay CoastSnap",
+        region: "Central Coast, NSW",
+        state: "NSW",
+        latitude: -33.45,
+        longitude: 151.4,
+        status: "active",
+        observationCount: 4,
+      },
+      {
+        name: "Saltmarsh Point CoastSnap",
+        region: "Bellarine Peninsula, VIC",
+        state: "VIC",
+        latitude: -38.28,
+        longitude: 144.62,
+        status: "active",
+        observationCount: 0,
+      },
+    ]);
   });
 
   it("never sets a real Spotteron site ID in this prototype's sample data", () => {
@@ -134,5 +168,30 @@ describe("getLatestObservationPerCoastSnapSite", () => {
     const latest = getLatestObservationPerCoastSnapSite();
     const siteIds = latest.map((item) => item.siteId);
     expect(new Set(siteIds).size).toBe(siteIds.length);
+  });
+});
+
+describe("getObservationDateRangeForSite", () => {
+  it("finds the earliest and latest observation at a site with several", () => {
+    const range = getObservationDateRangeForSite("CS-DRIFTWOOD");
+    expect(range).toBeDefined();
+    expect(range!.earliest.id).toBe("CS-DRIFTWOOD-OBS-001");
+    expect(range!.latest.id).toBe("CS-DRIFTWOOD-OBS-004");
+  });
+
+  it("returns undefined for a site with no observations", () => {
+    expect(getObservationDateRangeForSite("CS-SALTMARSH")).toBeUndefined();
+  });
+
+  it("returns undefined for an unknown site ID", () => {
+    expect(getObservationDateRangeForSite("CS-DOES-NOT-EXIST")).toBeUndefined();
+  });
+
+  it("returns the same single observation as both bounds for a site with exactly one", () => {
+    const singleObservationSite = [
+      { siteId: "CS-SOLO", capturedAtUtc: "2026-01-01T00:00:00.000Z" } as CoastSnapObservation,
+    ];
+    const range = getObservationDateRangeForSite("CS-SOLO", singleObservationSite);
+    expect(range!.earliest).toBe(range!.latest);
   });
 });

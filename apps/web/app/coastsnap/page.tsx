@@ -3,6 +3,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ImageCard } from "@/components/ui/image-card";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { coastSnapRepository } from "@/data";
+import { formatApproximateLocation } from "@/lib/format";
 import { getOperatingStatusTone } from "@/lib/status-tone";
 
 export const metadata: Metadata = {
@@ -28,11 +29,16 @@ export default async function CoastSnapPage() {
 
       <p className="mt-6 max-w-2xl text-body text-muted">
         CoastSnap invites members of the public to contribute their own coastal photos, lined up
-        against a fixed alignment mark at a monitored site, extending AusCIN&apos;s station
-        coverage to community-monitored locations. This area of the portal is a frontend-only
-        development preview: every site, contributor and photo shown here is a synthetic fixture,
-        generated for interface development and testing. None of it has come from the real
-        Spotteron platform, and none of these sites correspond to a real coastal location.
+        against a fixed alignment mark at a monitored site. Unlike AusCIN&apos;s fixed-camera and
+        lidar stations, a CoastSnap site has no permanently installed camera or scanner &mdash;
+        every observation comes from a visitor&apos;s own phone, which is why each one carries a
+        contributor credit instead of a camera ID.
+      </p>
+      <p className="mt-4 max-w-2xl text-body text-muted">
+        This area of the portal is a frontend-only development preview: every site, contributor
+        and photo shown here is a synthetic fixture, generated for interface development and
+        testing. None of it has come from the real Spotteron platform, and none of these sites
+        correspond to a real coastal location.
       </p>
 
       <section className="mt-16 border-t border-border pt-10">
@@ -51,18 +57,18 @@ export default async function CoastSnapPage() {
             {siteSummaries.map(({ site, observationCount }) => (
               <ImageCard
                 key={site.id}
+                href={`/coastsnap/${site.id}`}
                 src={site.representativeImageUrl}
                 alt={`Representative sample image for ${site.name}`}
                 title={site.name}
-                meta={`${site.region} · ${observationCount} observation${observationCount === 1 ? "" : "s"}`}
+                meta={`${site.region} · ${formatApproximateLocation(site.latitude, site.longitude)} · ${observationCount} observation${observationCount === 1 ? "" : "s"}`}
                 status={{ label: site.status, tone: getOperatingStatusTone(site.status) }}
               />
             ))}
           </div>
         )}
         <p className="mt-6 max-w-2xl text-small text-muted">
-          Individual site pages, photo archives and detail pages are part of a later development
-          stage and are not yet linked from here.
+          Photo archives and individual observation pages are part of a later development stage.
         </p>
       </section>
     </div>
