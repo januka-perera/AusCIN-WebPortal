@@ -3,7 +3,8 @@ import Link from "next/link";
 import { StatusLabel, type StatusTone } from "@/components/ui/status-label";
 
 type ImageCardProps = {
-  href: string;
+  /** Omit when the destination page doesn't exist yet — renders a plain, non-interactive card instead of a dead link. */
+  href?: string;
   src: string;
   alt: string;
   title: string;
@@ -17,8 +18,8 @@ type ImageCardProps = {
  * media-performance rules in AGENTS.md.
  */
 export function ImageCard({ href, src, alt, title, meta, status }: ImageCardProps) {
-  return (
-    <Link href={href} className="group block">
+  const content = (
+    <>
       <div className="relative aspect-[4/3] overflow-hidden bg-border/40">
         <Image
           src={src}
@@ -37,6 +38,16 @@ export function ImageCard({ href, src, alt, title, meta, status }: ImageCardProp
         <p className="text-small font-medium text-foreground">{title}</p>
         <p className="mt-1 text-meta uppercase tracking-label text-muted">{meta}</p>
       </div>
+    </>
+  );
+
+  if (!href) {
+    return <div className="group block">{content}</div>;
+  }
+
+  return (
+    <Link href={href} className="group block">
+      {content}
     </Link>
   );
 }

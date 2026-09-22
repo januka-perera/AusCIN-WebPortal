@@ -84,10 +84,11 @@ export function filterMediaByType(media: MediaItem[], mediaType: MediaType): Med
   return media.filter((item) => item.mediaType === mediaType);
 }
 
-export function sortMediaByCaptureTime(
-  media: MediaItem[],
+/** Generic over anything with a capturedAtUtc field, so non-station observation types (e.g. CoastSnap) can reuse this instead of duplicating the same sort. */
+export function sortMediaByCaptureTime<T extends { capturedAtUtc: string }>(
+  media: T[],
   direction: "asc" | "desc" = "asc",
-): MediaItem[] {
+): T[] {
   const sorted = [...media].sort(
     (a, b) => new Date(a.capturedAtUtc).getTime() - new Date(b.capturedAtUtc).getTime(),
   );

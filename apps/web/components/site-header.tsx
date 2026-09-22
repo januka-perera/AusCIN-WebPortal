@@ -9,6 +9,7 @@ const primaryNavLinks = [
   { href: "/stations", label: "Stations" },
   { href: "/observations", label: "Archive" },
   { href: "/map", label: "Map" },
+  { href: "/coastsnap", label: "CoastSnap" },
   { href: "/research", label: "Research" },
   { href: "/about", label: "About" },
 ];
