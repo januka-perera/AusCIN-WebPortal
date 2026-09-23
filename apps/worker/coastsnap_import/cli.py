@@ -1,11 +1,31 @@
 """CLI entry point for the single-site CoastSnap importer.
 
+Three explicit, mutually exclusive run modes — no flag's behaviour is
+allowed to be misleading about what it does or doesn't touch:
+
+    --plan-only      (default) Fetch Spotteron metadata only. No image
+                      downloads, no Level 0/1 files, no manifest. Makes
+                      no Gadi connection.
+    --process-local  Fetch records, download images, create Level 0/1
+                      files and write the manifest, all locally. Makes
+                      no Gadi connection.
+    --transfer       Everything --process-local does, plus an SFTP
+                      transfer to Gadi. Requires Gadi SFTP configuration
+                      (see config.py / .env.example).
+
     python -m coastsnap_import.cli \\
         --root-id <ROOT_ID> \\
         --date-from 2026-08-01 --date-to 2026-08-31 \\
         --staging-dir ./staging --manifest ./staging/manifests/<ROOT_ID>.json \\
         [--max-images 5] [--remote-root /g/data/qu34/AusCIN/coastsnap-test] \\
-        [--dry-run] [--no-delete] [--delete-after-success]
+        [--plan-only | --process-local | --transfer] [--no-delete]
+
+--date-from/--date-to accept either a bare UTC date (YYYY-MM-DD) or a
+full ISO-8601 UTC timestamp (e.g. 2026-08-23T00:00:00Z).
+
+--delete-after-success always exits with an error: deletion is not
+implemented in this version, so the flag is rejected rather than
+silently accepted and ignored.
 
 See the module docstrings of spotteron_client.py and image_resolver.py
 for what is confirmed vs. unconfirmed about the real Spotteron v2.4
@@ -19,6 +39,7 @@ import argparse
 import itertools
 import sys
 from datetime import datetime, time, timezone
+from enum import Enum
 from pathlib import Path
 from typing import Optional
 
@@ -26,10 +47,11 @@ from . import __version__
 from .config import ConfigError, WorkerConfig
 from .image_resolver import (
     ImageUrlResolutionError,
+    ImageUrlResolver,
+    peek_image_reference_or_url,
     resolve_attribution_permitted,
     resolve_contributor_display_name,
     resolve_latitude,
-    resolve_level0_image_url,
     resolve_longitude,
     resolve_media_reference,
 )
@@ -48,6 +70,7 @@ from .models import (
 )
 from .processor import Level0Level1Processor, ProcessingError, compute_sha256, infer_extension
 from .sftp_publisher import (
+    ParamikoReadBackSftpTransport,
     ParamikoSshSftpOptions,
     ParamikoSshSftpTransport,
     SftpPublisher,
@@ -63,27 +86,69 @@ from .spotteron_client import (
 )
 
 
+class RunMode(str, Enum):
+    PLAN_ONLY = "plan-only"
+    PROCESS_LOCAL = "process-local"
+    TRANSFER = "transfer"
+
+
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="coastsnap-import", description=__doc__)
     parser.add_argument("--root-id", required=True, help="Spotteron root/site ID to ingest.")
-    parser.add_argument("--date-from", required=True, help="UTC date range start, YYYY-MM-DD.")
-    parser.add_argument("--date-to", required=True, help="UTC date range end (inclusive), YYYY-MM-DD.")
+    parser.add_argument("--date-from", required=True, help="UTC range start: YYYY-MM-DD or full ISO-8601 (e.g. 2026-08-23T00:00:00Z).")
+    parser.add_argument("--date-to", required=True, help="UTC range end (inclusive): YYYY-MM-DD or full ISO-8601.")
     parser.add_argument("--max-images", type=int, default=5, help="Maximum observations to process (default: 5).")
     parser.add_argument("--staging-dir", default=None, help="Local staging directory (overrides COASTSNAP_STAGING_DIR).")
     parser.add_argument("--manifest", default=None, help="Manifest JSON path (default: <staging-dir>/manifests/<root-id>.json).")
     parser.add_argument("--remote-root", default=None, help="Remote root on Gadi (overrides GADI_REMOTE_ROOT).")
-    parser.add_argument("--dry-run", action="store_true", help="Run the full local pipeline but skip the SFTP transfer.")
+
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
+        "--plan-only", action="store_true",
+        help="Fetch Spotteron metadata only. No image downloads, no local files, no Gadi connection. This is the default.",
+    )
+    mode_group.add_argument(
+        "--process-local", action="store_true",
+        help="Download images and create Level 0/1 files and a manifest locally. No Gadi connection.",
+    )
+    mode_group.add_argument(
+        "--transfer", action="store_true",
+        help="Process locally and transfer to Gadi via SFTP. Requires Gadi SFTP configuration.",
+    )
+
     parser.add_argument("--no-delete", action="store_true", help="Explicitly confirm no deletion (this is always the case in this version).")
-    parser.add_argument("--delete-after-success", action="store_true", help="Accepted for forward compatibility; deletion is not implemented in this version.")
+    parser.add_argument("--delete-after-success", action="store_true", help="Rejected: deletion is not implemented in this version.")
     return parser.parse_args(argv)
 
 
-def _parse_utc_date_range(date_from: str, date_to: str) -> tuple[datetime, datetime]:
+def resolve_run_mode(args: argparse.Namespace) -> RunMode:
+    if args.transfer:
+        return RunMode.TRANSFER
+    if args.process_local:
+        return RunMode.PROCESS_LOCAL
+    return RunMode.PLAN_ONLY
+
+
+def _parse_boundary(value: str, *, end_of_day: bool) -> datetime:
     try:
-        start = datetime.combine(datetime.strptime(date_from, "%Y-%m-%d").date(), time.min, tzinfo=timezone.utc)
-        end = datetime.combine(datetime.strptime(date_to, "%Y-%m-%d").date(), time.max, tzinfo=timezone.utc)
+        date_only = datetime.strptime(value, "%Y-%m-%d").date()
+        return datetime.combine(date_only, time.max if end_of_day else time.min, tzinfo=timezone.utc)
+    except ValueError:
+        pass
+
+    iso_value = f"{value[:-1]}+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(iso_value)
     except ValueError as exc:
-        raise ConfigError(f"--date-from/--date-to must be YYYY-MM-DD: {exc}") from exc
+        raise ConfigError(
+            f"{value!r} is not a valid date/time: use YYYY-MM-DD or full ISO-8601 (e.g. 2026-08-23T00:00:00Z)"
+        ) from exc
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+
+
+def _parse_utc_date_range(date_from: str, date_to: str) -> tuple[datetime, datetime]:
+    start = _parse_boundary(date_from, end_of_day=False)
+    end = _parse_boundary(date_to, end_of_day=True)
     if start > end:
         raise ConfigError(f"--date-from ({date_from}) must not be after --date-to ({date_to}).")
     return start, end
@@ -105,15 +170,51 @@ def _parse_observation(raw_spot: dict, root_id: str) -> SourceObservation:
     )
 
 
-def run(config: WorkerConfig, *, root_id: str, topic_id: int, date_from_utc: datetime, date_to_utc: datetime,
-        max_images: int, manifest_path: Path, dry_run: bool, delete_after_success: bool) -> int:
-    """Runs the pipeline once. Returns a process exit code (0 = no failures)."""
-    if delete_after_success:
-        print("[warn] --delete-after-success was requested but deletion is not implemented in this "
-              "version; no files will be deleted.", file=sys.stderr)
+def _run_plan_only(
+    client: SpotteronClient, *, root_id: str, topic_id: int, date_from_utc: datetime, date_to_utc: datetime,
+    max_images: int, page_limit: int,
+) -> int:
+    """Fetches Spotteron metadata only. Never downloads an image, never
+    writes a local file, never touches Gadi."""
+    count = 0
+    try:
+        raw_spots = client.iter_spots(topic_id=topic_id, page_limit=page_limit)
+        filtered = filter_by_spotted_at(raw_spots, date_from_utc, date_to_utc)
+        for raw_spot in itertools.islice(filtered, max_images):
+            observation_id = str(raw_spot.get("id") or raw_spot.get("observation_id") or "<unknown>")
+            spotted_at = extract_spotted_at_utc(raw_spot)
+            image_hint = peek_image_reference_or_url(raw_spot)
+            print(f"[plan] root_id={root_id} observation_id={observation_id} spotted_at_utc={spotted_at} image_reference_or_url={image_hint!r}")
+            count += 1
+    except SpotteronClientError as exc:
+        print(f"[fatal] Spotteron request failed: {exc}", file=sys.stderr)
+        return 1
 
-    if not dry_run:
+    print(f"Plan complete: {count} observation(s) in range (no files written, no Gadi connection made).")
+    return 0
+
+
+def run(
+    config: WorkerConfig, *, root_id: str, topic_id: int, date_from_utc: datetime, date_to_utc: datetime,
+    max_images: int, manifest_path: Path, mode: RunMode,
+) -> int:
+    """Runs the pipeline once. Returns a process exit code (0 = no failures)."""
+    if mode is RunMode.TRANSFER:
         config.require_transfer_fields()
+
+    client = SpotteronClient(
+        SpotteronClientOptions(
+            base_url=config.spotteron_base_url,
+            api_version=config.spotteron_api_version,
+            bearer_token=config.spotteron_bearer_token,
+        )
+    )
+
+    if mode is RunMode.PLAN_ONLY:
+        return _run_plan_only(
+            client, root_id=root_id, topic_id=topic_id, date_from_utc=date_from_utc, date_to_utc=date_to_utc,
+            max_images=max_images, page_limit=config.spotteron_page_limit,
+        )
 
     manifest_store = ManifestStore()
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -137,26 +238,26 @@ def run(config: WorkerConfig, *, root_id: str, topic_id: int, date_from_utc: dat
         ),
     }
 
-    client = SpotteronClient(
-        SpotteronClientOptions(
-            base_url=config.spotteron_base_url,
-            api_version=config.spotteron_api_version,
-            bearer_token=config.spotteron_bearer_token,
-        )
+    image_resolver = ImageUrlResolver(
+        image_base_url=config.spotteron_image_base_url,
+        bearer_token=config.spotteron_bearer_token,
     )
     processor = Level0Level1Processor(staging_dir=config.staging_dir)
     embedder = build_embedder(config.metadata_backend, exiftool_path=config.exiftool_path)
 
     transport: Optional[SshSftpTransport] = None
     publisher: Optional[SftpPublisher] = None
-    if not dry_run:
-        transport = ParamikoSshSftpTransport(
-            ParamikoSshSftpOptions(
-                host=config.gadi_sftp_host,  # type: ignore[arg-type]  # validated by require_transfer_fields()
-                port=config.gadi_sftp_port,
-                username=config.gadi_sftp_username,  # type: ignore[arg-type]
-                private_key_path=config.gadi_sftp_private_key_path,  # type: ignore[arg-type]
-            )
+    if mode is RunMode.TRANSFER:
+        sftp_options = ParamikoSshSftpOptions(
+            host=config.gadi_sftp_host,  # type: ignore[arg-type]  # validated by require_transfer_fields()
+            port=config.gadi_sftp_port,
+            username=config.gadi_sftp_username,  # type: ignore[arg-type]
+            private_key_path=config.gadi_sftp_private_key_path,  # type: ignore[arg-type]
+        )
+        transport = (
+            ParamikoReadBackSftpTransport(sftp_options)
+            if config.gadi_checksum_strategy == "read-back"
+            else ParamikoSshSftpTransport(sftp_options)
         )
         publisher = SftpPublisher(transport, remote_root=config.remote_root)
 
@@ -191,10 +292,11 @@ def run(config: WorkerConfig, *, root_id: str, topic_id: int, date_from_utc: dat
                     observation=observation,
                     root_id=root_id,
                     processor=processor,
+                    image_resolver=image_resolver,
                     embedder=embedder,
                     embedder_backend=config.metadata_backend,
                     staging_dir=config.staging_dir,
-                    dry_run=dry_run,
+                    attempt_transfer=(mode is RunMode.TRANSFER),
                     publisher=publisher,
                     existing_entry=existing_entry,
                 )
@@ -246,10 +348,11 @@ def _ingest_one(
     observation: SourceObservation,
     root_id: str,
     processor: Level0Level1Processor,
+    image_resolver: ImageUrlResolver,
     embedder,
     embedder_backend: str,
     staging_dir: Path,
-    dry_run: bool,
+    attempt_transfer: bool,
     publisher: Optional[SftpPublisher],
     existing_entry: Optional[ManifestEntry],
 ) -> ManifestEntry:
@@ -263,7 +366,7 @@ def _ingest_one(
     _write_json(staging_dir / record_ref.site_record_relative_path, site_raw_record)
     _write_json(staging_dir / record_ref.observation_record_relative_path, raw_spot)
 
-    image_url = resolve_level0_image_url(raw_spot)
+    image_url = image_resolver.resolve(raw_spot, observation.observation_id)
     observation = observation.model_copy(update={"image_url": image_url})
 
     level0_id = f"{observation.observation_id}-L0"
@@ -314,10 +417,7 @@ def _ingest_one(
     # --- Transfers: reuse anything already verified; (re)attempt only what isn't. ---
     level0_transfer = _reusable_transfer(existing_entry.level0_transfer if existing_entry else None)
     level1_transfer = _reusable_transfer(existing_entry.level1_transfer if existing_entry else None)
-    if dry_run:
-        if level0_transfer is None or level1_transfer is None:
-            print(f"[dry-run] would transfer {level0.remote_relative_path} and {level1.remote_relative_path}")
-    else:
+    if attempt_transfer:
         assert publisher is not None
         if level0_transfer is None:
             level0_transfer = publisher.publish(
@@ -333,6 +433,8 @@ def _ingest_one(
                 local_checksum=level1.checksum,
                 product_id=level1.product_id,
             )
+    elif level0_transfer is None or level1_transfer is None:
+        print(f"[process-local] would transfer {level0.remote_relative_path} and {level1.remote_relative_path} in --transfer mode")
 
     return ManifestEntry(
         site=site,
@@ -359,6 +461,17 @@ def _write_json(path: Path, data: dict) -> None:
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(argv)
+
+    if args.delete_after_success:
+        print(
+            "[config error] --delete-after-success is rejected: deletion is not implemented in this "
+            "version. Remove this flag; no files are ever deleted automatically.",
+            file=sys.stderr,
+        )
+        return 2
+
+    mode = resolve_run_mode(args)
+
     try:
         date_from_utc, date_to_utc = _parse_utc_date_range(args.date_from, args.date_to)
         config = WorkerConfig.from_env(
@@ -384,8 +497,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             date_to_utc=date_to_utc,
             max_images=args.max_images,
             manifest_path=manifest_path,
-            dry_run=args.dry_run,
-            delete_after_success=args.delete_after_success,
+            mode=mode,
         )
     except ConfigError as exc:
         print(f"[config error] {exc}", file=sys.stderr)

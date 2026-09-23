@@ -1,0 +1,17 @@
+{
+  "_synthetic_fixture_note": "Modelled on a REAL Spotteron v2.4 response, confirmed by the project owner: attributes.image is an opaque reference (e.g. '000037/2026/09/23/gxbdt1a3e04qxc5ooa9llndgqzd4swa5'), not a URL. Everything else in this fixture (spotted_at, latitude/longitude, contributor fields) remains an assumed/unconfirmed shape, per image_resolver.py's module docstring.",
+  "data": [
+    {
+      "id": "2001",
+      "type": "spot",
+      "attributes": {
+        "spotted_at": "2026-09-23T04:10:00Z",
+        "image": "000037/2026/09/23/gxbdt1a3e04qxc5ooa9llndgqzd4swa5",
+        "latitude": -33.45,
+        "longitude": 151.4,
+        "contributor_name": "Test Contributor C",
+        "attribution_permitted": true
+      }
+    }
+  ]
+}

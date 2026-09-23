@@ -137,6 +137,32 @@ class ParamikoSshSftpTransport:
         self._client.close()
 
 
+class ParamikoReadBackSftpTransport(ParamikoSshSftpTransport):
+    """Same as ParamikoSshSftpTransport, except checksum verification
+    never runs a remote command: it streams the remote file back over
+    the existing SFTP session and hashes it locally instead. Use this
+    when the remote host has no ``sha256sum`` on PATH, or when
+    ``exec_command`` is disallowed by policy. Selected via
+    ``GADI_CHECKSUM_STRATEGY=read-back`` (see config.py).
+    """
+
+    _READ_CHUNK_SIZE = 1024 * 1024
+
+    def exec_sha256sum(self, remote_path: str) -> Optional[str]:
+        import hashlib
+
+        if not self.remote_exists(remote_path):
+            return None
+        digest = hashlib.sha256()
+        with self._sftp.open(remote_path, "rb") as remote_file:
+            while True:
+                chunk = remote_file.read(self._READ_CHUNK_SIZE)
+                if not chunk:
+                    break
+                digest.update(chunk)
+        return digest.hexdigest()
+
+
 class SftpPublisher:
     def __init__(self, transport: SshSftpTransport, remote_root: str):
         self._transport = transport

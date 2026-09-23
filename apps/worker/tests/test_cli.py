@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -47,16 +48,23 @@ def base_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
 
 
 def _mock_spots_page(page1_name="spotteron_page_1.json"):
-    # The default page limit (50) is far larger than this 2-item fixture
-    # page, so pagination always terminates after exactly one request
-    # (see test_spotteron_client.py for dedicated multi-page tests) —
-    # only one response needs registering per main() invocation.
+    # A single registered response is reused for every request to the
+    # same URL (verified against the installed `responses` version), so
+    # one registration per fixture page is enough even across multiple
+    # main() invocations in the same test.
     responses.add(responses.GET, SPOTS_URL, json=load_fixture(page1_name), status=200)
 
 
 def _mock_image_downloads():
-    responses.add(responses.GET, IMAGE_URL_1001, body=SAMPLE_IMAGE_BYTES, status=200, content_type="image/jpeg")
-    responses.add(responses.GET, IMAGE_URL_1002, body=SAMPLE_IMAGE_BYTES, status=200, content_type="image/jpeg")
+    # Both a HEAD (image-reference validation, see image_resolver.py)
+    # and a GET (the actual Level 0 download) are needed per image URL.
+    for url in (IMAGE_URL_1001, IMAGE_URL_1002):
+        responses.add(responses.HEAD, url, status=200, content_type="image/jpeg")
+        responses.add(responses.GET, url, body=SAMPLE_IMAGE_BYTES, status=200, content_type="image/jpeg")
+
+
+def _no_transport(*_args, **_kwargs):
+    raise AssertionError("this mode must never construct an SSH/SFTP transport")
 
 
 def test_main_missing_config_exits_2_without_network_call(monkeypatch: pytest.MonkeyPatch):
@@ -70,17 +78,38 @@ def test_main_missing_config_exits_2_without_network_call(monkeypatch: pytest.Mo
 
 
 @responses.activate
-def test_dry_run_full_local_pipeline(base_env: Path, monkeypatch: pytest.MonkeyPatch):
+def test_plan_only_does_not_write_files(base_env: Path):
     _mock_spots_page()
-    _mock_image_downloads()
-    monkeypatch.setattr(
-        cli,
-        "ParamikoSshSftpTransport",
-        lambda options: (_ for _ in ()).throw(AssertionError("dry-run must never construct a transport")),
-    )
+    # No image HEAD/GET mocks registered: --plan-only must never touch
+    # the image-reference resolver's HTTP validation at all.
 
     exit_code = cli.main(
-        ["--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31", "--dry-run", "--max-images", "2"]
+        ["--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31", "--plan-only", "--max-images", "2"]
+    )
+
+    assert exit_code == 0
+    assert not base_env.exists()  # no Level 0/1, manifest or source-record files anywhere
+
+
+@responses.activate
+def test_default_mode_with_no_flag_is_safe_plan_only(base_env: Path):
+    _mock_spots_page()
+
+    exit_code = cli.main(["--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31"])
+
+    assert exit_code == 0
+    assert not base_env.exists()
+
+
+@responses.activate
+def test_process_local_full_pipeline(base_env: Path, monkeypatch: pytest.MonkeyPatch):
+    _mock_spots_page()
+    _mock_image_downloads()
+    monkeypatch.setattr(cli, "ParamikoSshSftpTransport", _no_transport)
+    monkeypatch.setattr(cli, "ParamikoReadBackSftpTransport", _no_transport)
+
+    exit_code = cli.main(
+        ["--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31", "--process-local", "--max-images", "2"]
     )
 
     assert exit_code == 0
@@ -100,7 +129,17 @@ def test_dry_run_full_local_pipeline(base_env: Path, monkeypatch: pytest.MonkeyP
 
 
 @responses.activate
-def test_real_transfer_verifies_and_renames(base_env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+def test_transfer_requires_transfer_configuration(base_env: Path):
+    # No GADI_SFTP_* env vars set. require_transfer_fields() must reject
+    # this before any Spotteron or SFTP call is made.
+    exit_code = cli.main(
+        ["--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31", "--transfer", "--max-images", "1"]
+    )
+    assert exit_code == 2
+
+
+@responses.activate
+def test_transfer_verifies_and_renames(base_env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     _mock_spots_page()
     _mock_image_downloads()
     key_path = tmp_path / "id_ed25519"
@@ -113,7 +152,7 @@ def test_real_transfer_verifies_and_renames(base_env: Path, monkeypatch: pytest.
     monkeypatch.setattr(cli, "ParamikoSshSftpTransport", lambda options: fake_transport)
 
     exit_code = cli.main(
-        ["--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31", "--max-images", "1"]
+        ["--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31", "--transfer", "--max-images", "1"]
     )
 
     assert exit_code == 0
@@ -128,7 +167,6 @@ def test_real_transfer_verifies_and_renames(base_env: Path, monkeypatch: pytest.
 @responses.activate
 def test_idempotent_rerun_skips_without_reuploading(base_env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     _mock_spots_page()
-    _mock_spots_page()  # registered twice: one page-set consumed per main() call
     _mock_image_downloads()
     key_path = tmp_path / "id_ed25519"
     key_path.write_text("not a real key")
@@ -136,7 +174,10 @@ def test_idempotent_rerun_skips_without_reuploading(base_env: Path, monkeypatch:
     monkeypatch.setenv("GADI_SFTP_USERNAME", "ausc-ingest")
     monkeypatch.setenv("GADI_SFTP_PRIVATE_KEY_PATH", str(key_path))
 
-    args = ["--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31", "--max-images", "1"]
+    args = [
+        "--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31",
+        "--transfer", "--max-images", "1",
+    ]
 
     first_transport = FakeSshSftpTransport()
     monkeypatch.setattr(cli, "ParamikoSshSftpTransport", lambda options: first_transport)
@@ -156,12 +197,36 @@ def test_idempotent_rerun_skips_without_reuploading(base_env: Path, monkeypatch:
 
 
 @responses.activate
+def test_corrupted_local_level0_file_triggers_redownload_on_rerun(base_env: Path):
+    _mock_spots_page()
+    _mock_image_downloads()
+    args = [
+        "--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31",
+        "--process-local", "--max-images", "1",
+    ]
+
+    assert cli.main(args) == 0
+    level0_file = base_env / "level-0" / "37" / "2026" / "08" / "01" / "images" / "1001.jpg"
+    level1_file = base_env / "level-1" / "37" / "2026" / "08" / "01" / "images" / "1001.jpg"
+    assert level0_file.read_bytes() == SAMPLE_IMAGE_BYTES
+
+    # Simulate on-disk corruption: the recorded checksum no longer matches.
+    level0_file.write_bytes(b"corrupted-on-disk-content")
+    level1_file.write_bytes(b"corrupted-on-disk-content")
+
+    assert cli.main(args) == 0  # a clear redownload, not a crash or a silently-reused bad file
+
+    assert level0_file.read_bytes() == SAMPLE_IMAGE_BYTES
+    assert level1_file.read_bytes() == SAMPLE_IMAGE_BYTES  # re-copied from the fresh Level 0 and re-embedded
+
+
+@responses.activate
 def test_max_images_limits_processed_count(base_env: Path):
     _mock_spots_page()
     _mock_image_downloads()
 
     exit_code = cli.main(
-        ["--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31", "--dry-run", "--max-images", "1"]
+        ["--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31", "--process-local", "--max-images", "1"]
     )
 
     assert exit_code == 0
@@ -169,30 +234,21 @@ def test_max_images_limits_processed_count(base_env: Path):
     assert len(manifest["entries"]) == 1
 
 
-@responses.activate
-def test_delete_after_success_does_not_delete_anything(
-    base_env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture
-):
-    _mock_spots_page()
-    _mock_image_downloads()
-    key_path = tmp_path / "id_ed25519"
-    key_path.write_text("not a real key")
-    monkeypatch.setenv("GADI_SFTP_HOST", "gadi.example.test")
-    monkeypatch.setenv("GADI_SFTP_USERNAME", "ausc-ingest")
-    monkeypatch.setenv("GADI_SFTP_PRIVATE_KEY_PATH", str(key_path))
-    monkeypatch.setattr(cli, "ParamikoSshSftpTransport", lambda options: FakeSshSftpTransport())
-
+def test_delete_after_success_is_rejected_before_any_network_call(base_env: Path):
+    # Deliberately NOT using @responses.activate / not registering any
+    # Spotteron or SFTP mock: if the flag were merely warned-about
+    # (its old behaviour) rather than rejected outright, this would
+    # attempt a real network call and fail with a connection error
+    # instead of the expected clean exit 2.
     exit_code = cli.main(
         [
             "--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31",
-            "--max-images", "1", "--delete-after-success",
+            "--process-local", "--max-images", "1", "--delete-after-success",
         ]
     )
 
-    assert exit_code == 0
-    assert "not implemented" in capsys.readouterr().err.lower()
-    level0_file = base_env / "level-0" / "37" / "2026" / "08" / "01" / "images" / "1001.jpg"
-    assert level0_file.exists()  # never deleted
+    assert exit_code == 2
+    assert not base_env.exists()
 
 
 def test_parse_args_defaults():
@@ -200,7 +256,17 @@ def test_parse_args_defaults():
     assert args.max_images == 5
     assert args.no_delete is False
     assert args.delete_after_success is False
-    assert args.dry_run is False
+    assert args.plan_only is False
+    assert args.process_local is False
+    assert args.transfer is False
+    assert cli.resolve_run_mode(args) is cli.RunMode.PLAN_ONLY
+
+
+def test_parse_args_rejects_multiple_modes():
+    with pytest.raises(SystemExit):
+        cli.parse_args(
+            ["--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31", "--plan-only", "--transfer"]
+        )
 
 
 def test_parse_utc_date_range_rejects_reversed_range():
@@ -221,3 +287,15 @@ def test_parse_utc_date_range_spans_full_days():
     start, end = cli._parse_utc_date_range("2026-08-01", "2026-08-01")
     assert start.hour == 0 and start.minute == 0
     assert end.hour == 23 and end.minute == 59
+
+
+def test_parse_utc_date_range_accepts_full_iso8601_with_z_suffix():
+    start, end = cli._parse_utc_date_range("2026-08-23T00:00:00Z", "2026-09-23T00:00:00Z")
+    assert start == datetime(2026, 8, 23, 0, 0, 0, tzinfo=timezone.utc)
+    assert end == datetime(2026, 9, 23, 0, 0, 0, tzinfo=timezone.utc)
+
+
+def test_parse_utc_date_range_accepts_mixed_bare_date_and_iso8601():
+    start, end = cli._parse_utc_date_range("2026-08-01", "2026-09-23T12:30:00Z")
+    assert start == datetime(2026, 8, 1, 0, 0, 0, tzinfo=timezone.utc)
+    assert end == datetime(2026, 9, 23, 12, 30, 0, tzinfo=timezone.utc)

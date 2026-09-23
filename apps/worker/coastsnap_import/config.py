@@ -19,10 +19,13 @@ from pydantic import BaseModel, field_validator
 DEFAULT_SPOTTERON_API_VERSION = "v2.4"
 DEFAULT_SPOTTERON_TOPIC_ID = 37
 DEFAULT_SPOTTERON_PAGE_LIMIT = 50
+DEFAULT_SPOTTERON_IMAGE_BASE_URL = "https://files.spotteron.com/images/spots"
 DEFAULT_REMOTE_ROOT = "/g/data/qu34/AusCIN/coastsnap-test"
 DEFAULT_MAX_IMAGES = 5
+DEFAULT_GADI_CHECKSUM_STRATEGY = "ssh-exec"
 
 MetadataBackendName = Literal["exiftool", "argus"]
+GadiChecksumStrategy = Literal["ssh-exec", "read-back"]
 
 
 class ConfigError(Exception):
@@ -42,6 +45,7 @@ class WorkerConfig(BaseModel):
     spotteron_topic_id: int = DEFAULT_SPOTTERON_TOPIC_ID
     spotteron_bearer_token: Optional[str] = None
     spotteron_page_limit: int = DEFAULT_SPOTTERON_PAGE_LIMIT
+    spotteron_image_base_url: str = DEFAULT_SPOTTERON_IMAGE_BASE_URL
 
     # Local processing
     staging_dir: Path
@@ -53,6 +57,7 @@ class WorkerConfig(BaseModel):
     gadi_sftp_port: int = 22
     gadi_sftp_username: Optional[str] = None
     gadi_sftp_private_key_path: Optional[Path] = None
+    gadi_checksum_strategy: GadiChecksumStrategy = DEFAULT_GADI_CHECKSUM_STRATEGY
     remote_root: str = DEFAULT_REMOTE_ROOT
 
     @field_validator("spotteron_base_url")
@@ -60,6 +65,13 @@ class WorkerConfig(BaseModel):
     def _base_url_must_be_http(cls, value: str) -> str:
         if not value.startswith(("http://", "https://")):
             raise ValueError("spotteron_base_url must start with http:// or https://")
+        return value.rstrip("/")
+
+    @field_validator("spotteron_image_base_url")
+    @classmethod
+    def _image_base_url_must_be_http(cls, value: str) -> str:
+        if not value.startswith(("http://", "https://")):
+            raise ValueError("spotteron_image_base_url must start with http:// or https://")
         return value.rstrip("/")
 
     @field_validator("spotteron_topic_id", "spotteron_page_limit", "gadi_sftp_port")
@@ -95,11 +107,13 @@ class WorkerConfig(BaseModel):
             f"spotteron_api_version={self.spotteron_api_version!r}, "
             f"spotteron_topic_id={self.spotteron_topic_id!r}, "
             f"spotteron_bearer_token={_redact(self.spotteron_bearer_token)!r}, "
+            f"spotteron_image_base_url={self.spotteron_image_base_url!r}, "
             f"staging_dir={str(self.staging_dir)!r}, "
             f"metadata_backend={self.metadata_backend!r}, "
             f"gadi_sftp_host={self.gadi_sftp_host!r}, "
             f"gadi_sftp_username={self.gadi_sftp_username!r}, "
             f"gadi_sftp_private_key_path={str(self.gadi_sftp_private_key_path) if self.gadi_sftp_private_key_path else None!r}, "
+            f"gadi_checksum_strategy={self.gadi_checksum_strategy!r}, "
             f"remote_root={self.remote_root!r})"
         )
 
@@ -132,6 +146,7 @@ class WorkerConfig(BaseModel):
             spotteron_topic_id=_int_or("SPOTTERON_TOPIC_ID", DEFAULT_SPOTTERON_TOPIC_ID),
             spotteron_bearer_token=source.get("SPOTTERON_BEARER_TOKEN") or None,
             spotteron_page_limit=_int_or("SPOTTERON_PAGE_LIMIT", DEFAULT_SPOTTERON_PAGE_LIMIT),
+            spotteron_image_base_url=source.get("SPOTTERON_IMAGE_BASE_URL") or DEFAULT_SPOTTERON_IMAGE_BASE_URL,
             staging_dir=Path(staging_dir),
             metadata_backend=source.get("COASTSNAP_METADATA_BACKEND", "exiftool") or "exiftool",
             exiftool_path=source.get("EXIFTOOL_PATH", "exiftool") or "exiftool",
@@ -139,6 +154,7 @@ class WorkerConfig(BaseModel):
             gadi_sftp_port=_int_or("GADI_SFTP_PORT", 22),
             gadi_sftp_username=source.get("GADI_SFTP_USERNAME") or None,
             gadi_sftp_private_key_path=Path(key_path) if key_path else None,
+            gadi_checksum_strategy=source.get("GADI_CHECKSUM_STRATEGY") or DEFAULT_GADI_CHECKSUM_STRATEGY,
             remote_root=source.get("GADI_REMOTE_ROOT") or DEFAULT_REMOTE_ROOT,
         )
         values.update(overrides)

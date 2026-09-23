@@ -1,30 +1,54 @@
-"""Resolves the Level 0 original image URL (and a few other fields
-whose exact JSON path is unconfirmed) from a raw Spotteron spot record.
+"""Resolves and validates the Level 0 original image URL from a raw
+Spotteron spot record, plus a few other fields whose exact JSON path
+is still unconfirmed (latitude/longitude, media reference, contributor
+name, attribution permission).
 
-UNCONFIRMED: the exact field(s) Spotteron v2.4 actually uses for the
-full-resolution image URL, latitude/longitude, media reference,
-contributor name, and attribution permission. Nothing here is
-invented as fact — each is tried as an ordered list of *candidate*
-JSON paths, the first present, correctly-typed match wins, and
-resolution fails loudly (raising, not guessing) if none match. This
-is the single place to update once the real v2.4 schema is confirmed
-against a live response — see the final report's "unresolved
-assumptions" section.
+CONFIRMED, from a real Spotteron v2.4 response supplied by the project
+owner: ``attributes.image`` is not a URL — it is an opaque reference,
+e.g.::
+
+    "000037/2026/09/23/gxbdt1a3e04qxc5ooa9llndgqzd4swa5"
+
+The single candidate download URL is built as::
+
+    {image_base_url}/{image_reference}.jpg
+
+with ``image_base_url`` defaulting to
+"https://files.spotteron.com/images/spots" and configurable via
+``SPOTTERON_IMAGE_BASE_URL`` (see config.py). This module does not
+guess among several URL *formats* — exactly one candidate is built
+(or used directly, if a field already contains a full URL — kept as a
+forward-compatible path for if the API later returns one) — and that
+one candidate is validated with a real HTTP request (HEAD, falling
+back to a streamed GET whose body is never read) before being
+accepted. A failed validation raises ``ImageUrlResolutionError``
+carrying the observation ID, the image reference, the attempted URL
+and the HTTP status, so a failure is diagnosable without re-running
+anything.
+
+UNCONFIRMED: latitude/longitude, media reference, contributor name and
+attribution-permission field names. Each is tried as an ordered list
+of candidate JSON paths; absence never becomes a guess.
 """
 
 from __future__ import annotations
 
 from typing import Any, Optional
 
-# Ordered candidate JSON paths, each a tuple of keys to walk. Tried top to
-# bottom; first match wins.
-_IMAGE_URL_CANDIDATES: tuple[tuple[str, ...], ...] = (
+import requests
+
+_DIRECT_URL_CANDIDATES: tuple[tuple[str, ...], ...] = (
     ("attributes", "image_url"),
     ("attributes", "photo_url"),
-    ("attributes", "image"),
-    ("attributes", "photo"),
     ("image_url",),
     ("photo_url",),
+)
+
+# Confirmed real field (see module docstring). "photo" is an
+# unconfirmed, lower-priority fallback only.
+_IMAGE_REFERENCE_CANDIDATES: tuple[tuple[str, ...], ...] = (
+    ("attributes", "image"),
+    ("attributes", "photo"),
 )
 
 _MEDIA_REFERENCE_CANDIDATES: tuple[tuple[str, ...], ...] = (
@@ -66,7 +90,29 @@ _ATTRIBUTION_PERMITTED_CANDIDATES: tuple[tuple[str, ...], ...] = (
 
 
 class ImageUrlResolutionError(Exception):
-    """Raised when no candidate field yields a usable Level 0 image URL."""
+    """Raised when no field yields a usable Level 0 image, or the one
+    candidate URL fails validation. Always carries enough structured
+    detail to diagnose without re-running anything."""
+
+    def __init__(
+        self,
+        *,
+        observation_id: str,
+        image_reference: Optional[str],
+        attempted_url: Optional[str],
+        http_status: Optional[int],
+        reason: str,
+    ):
+        self.observation_id = observation_id
+        self.image_reference = image_reference
+        self.attempted_url = attempted_url
+        self.http_status = http_status
+        self.reason = reason
+        super().__init__(
+            f"Could not resolve a usable Level 0 image for observation_id={observation_id!r}: "
+            f"image_reference={image_reference!r} attempted_url={attempted_url!r} "
+            f"http_status={http_status!r} reason={reason}"
+        )
 
 
 def _dig(raw: dict[str, Any], path: tuple[str, ...]) -> Any:
@@ -99,16 +145,100 @@ def _first_float_match(raw_spot: dict[str, Any], candidates: tuple[tuple[str, ..
     return None
 
 
-def resolve_level0_image_url(raw_spot: dict[str, Any]) -> str:
-    """Returns the best-guess Level 0 original URL, or raises ImageUrlResolutionError."""
-    url = _first_string_match(raw_spot, _IMAGE_URL_CANDIDATES)
-    if url and url.startswith(("http://", "https://")):
-        return url
-    spot_id = raw_spot.get("id", raw_spot.get("observation_id", "<unknown>"))
-    raise ImageUrlResolutionError(
-        f"Could not resolve a Level 0 image URL for spot id={spot_id!r}; "
-        f"none of the candidate fields matched a usable http(s) URL: {_IMAGE_URL_CANDIDATES}"
-    )
+def peek_image_reference_or_url(raw_spot: dict[str, Any]) -> Optional[str]:
+    """A non-validating peek at what *would* be used to build the Level 0
+    URL — makes no HTTP request. Used only for --plan-only output."""
+    direct_url = _first_string_match(raw_spot, _DIRECT_URL_CANDIDATES)
+    if direct_url and direct_url.startswith(("http://", "https://")):
+        return direct_url
+    return _first_string_match(raw_spot, _IMAGE_REFERENCE_CANDIDATES)
+
+
+class ImageUrlResolver:
+    """Resolves AND validates the Level 0 image URL for one observation.
+
+    Makes at most one real HTTP request per call to ``resolve`` (a
+    HEAD request; falls back to a streamed GET — with the body never
+    read — only if HEAD doesn't give a clear answer). Never downloads
+    the actual image here; that happens later in processor.py.
+    """
+
+    def __init__(
+        self,
+        image_base_url: str,
+        bearer_token: Optional[str] = None,
+        timeout_seconds: float = 15.0,
+        session: Optional[requests.Session] = None,
+    ):
+        self._image_base_url = image_base_url.rstrip("/")
+        self._bearer_token = bearer_token
+        self._timeout_seconds = timeout_seconds
+        self._session = session or requests.Session()
+
+    def _headers(self) -> dict[str, str]:
+        headers = {"Accept": "image/*"}
+        if self._bearer_token:
+            headers["Authorization"] = f"Bearer {self._bearer_token}"
+        return headers
+
+    def resolve(self, raw_spot: dict[str, Any], observation_id: str) -> str:
+        """Returns a validated, usable Level 0 URL, or raises ImageUrlResolutionError."""
+        direct_url = _first_string_match(raw_spot, _DIRECT_URL_CANDIDATES)
+        image_reference: Optional[str] = None
+
+        if direct_url and direct_url.startswith(("http://", "https://")):
+            candidate_url = direct_url
+        else:
+            image_reference = _first_string_match(raw_spot, _IMAGE_REFERENCE_CANDIDATES)
+            if not image_reference:
+                raise ImageUrlResolutionError(
+                    observation_id=observation_id,
+                    image_reference=None,
+                    attempted_url=None,
+                    http_status=None,
+                    reason="no image reference or direct URL field found on the raw spot record",
+                )
+            candidate_url = f"{self._image_base_url}/{image_reference}.jpg"
+
+        self._validate(candidate_url, observation_id, image_reference)
+        return candidate_url
+
+    def _validate(self, url: str, observation_id: str, image_reference: Optional[str]) -> None:
+        try:
+            response = self._session.head(url, headers=self._headers(), timeout=self._timeout_seconds, allow_redirects=True)
+            needs_get_fallback = response.status_code in (405, 501) or "Content-Type" not in response.headers
+            if needs_get_fallback:
+                response.close()
+                response = self._session.get(url, headers=self._headers(), timeout=self._timeout_seconds, stream=True)
+        except requests.RequestException as exc:
+            raise ImageUrlResolutionError(
+                observation_id=observation_id,
+                image_reference=image_reference,
+                attempted_url=url,
+                http_status=None,
+                reason=f"request failed: {exc}",
+            ) from exc
+
+        try:
+            if not response.ok:
+                raise ImageUrlResolutionError(
+                    observation_id=observation_id,
+                    image_reference=image_reference,
+                    attempted_url=url,
+                    http_status=response.status_code,
+                    reason="non-success HTTP status",
+                )
+            content_type = response.headers.get("Content-Type", "")
+            if not content_type.lower().startswith("image/"):
+                raise ImageUrlResolutionError(
+                    observation_id=observation_id,
+                    image_reference=image_reference,
+                    attempted_url=url,
+                    http_status=response.status_code,
+                    reason=f"non-image content-type: {content_type!r}",
+                )
+        finally:
+            response.close()
 
 
 def resolve_media_reference(raw_spot: dict[str, Any]) -> Optional[str]:
