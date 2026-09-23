@@ -27,6 +27,14 @@ full ISO-8601 UTC timestamp (e.g. 2026-08-23T00:00:00Z).
 implemented in this version, so the flag is rejected rather than
 silently accepted and ignored.
 
+--preflight runs environment/connectivity checks only (Python version,
+required packages, ExifTool, staging directory, Spotteron API
+reachability) and exits — it never contacts Gadi and never downloads
+an image. When --preflight is given, --root-id/--date-from/--date-to
+are not required:
+
+    python -m coastsnap_import.cli --preflight [--staging-dir ./staging]
+
 See the module docstrings of spotteron_client.py and image_resolver.py
 for what is confirmed vs. unconfirmed about the real Spotteron v2.4
 schema. This module makes no live network calls when imported (only
@@ -37,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import itertools
+import os
 import sys
 from datetime import datetime, time, timezone
 from enum import Enum
@@ -45,6 +54,18 @@ from typing import Optional
 
 from . import __version__
 from .config import ConfigError, WorkerConfig
+from .preflight import (
+    PreflightCheck,
+    check_bearer_token_configured,
+    check_exiftool_available,
+    check_exiftool_namespace_config,
+    check_exiftool_version,
+    check_python_dependencies,
+    check_python_version,
+    check_spotteron_reachable,
+    check_staging_dir_disk_space,
+    check_staging_dir_writable,
+)
 from .image_resolver import (
     ImageUrlResolutionError,
     ImageUrlResolver,
@@ -82,6 +103,7 @@ from .spotteron_client import (
     SpotteronClientError,
     SpotteronClientOptions,
     extract_spotted_at_utc,
+    filter_by_root_id,
     filter_by_spotted_at,
 )
 
@@ -94,13 +116,19 @@ class RunMode(str, Enum):
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="coastsnap-import", description=__doc__)
-    parser.add_argument("--root-id", required=True, help="Spotteron root/site ID to ingest.")
-    parser.add_argument("--date-from", required=True, help="UTC range start: YYYY-MM-DD or full ISO-8601 (e.g. 2026-08-23T00:00:00Z).")
-    parser.add_argument("--date-to", required=True, help="UTC range end (inclusive): YYYY-MM-DD or full ISO-8601.")
+    # Not required at the argparse level: --preflight needs none of
+    # these. main() enforces they're all present for every other mode.
+    parser.add_argument("--root-id", default=None, help="Spotteron root/site ID to ingest. Required unless --preflight.")
+    parser.add_argument("--date-from", default=None, help="UTC range start: YYYY-MM-DD or full ISO-8601 (e.g. 2026-08-23T00:00:00Z). Required unless --preflight.")
+    parser.add_argument("--date-to", default=None, help="UTC range end (inclusive): YYYY-MM-DD or full ISO-8601. Required unless --preflight.")
     parser.add_argument("--max-images", type=int, default=5, help="Maximum observations to process (default: 5).")
     parser.add_argument("--staging-dir", default=None, help="Local staging directory (overrides COASTSNAP_STAGING_DIR).")
     parser.add_argument("--manifest", default=None, help="Manifest JSON path (default: <staging-dir>/manifests/<root-id>.json).")
     parser.add_argument("--remote-root", default=None, help="Remote root on Gadi (overrides GADI_REMOTE_ROOT).")
+    parser.add_argument(
+        "--preflight", action="store_true",
+        help="Check the environment (Python, packages, ExifTool, staging directory, Spotteron reachability) and exit. Never contacts Gadi or downloads an image.",
+    )
 
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument(
@@ -163,6 +191,8 @@ def _parse_observation(raw_spot: dict, root_id: str) -> SourceObservation:
         observation_id=observation_id,
         root_id=root_id,
         spotted_at_utc=extract_spotted_at_utc(raw_spot),
+        latitude=resolve_latitude(raw_spot),
+        longitude=resolve_longitude(raw_spot),
         image_url=None,  # resolved separately; failures there must not stop parsing
         media_reference=resolve_media_reference(raw_spot),
         contributor_display_name=resolve_contributor_display_name(raw_spot),
@@ -178,9 +208,10 @@ def _run_plan_only(
     writes a local file, never touches Gadi."""
     count = 0
     try:
-        raw_spots = client.iter_spots(topic_id=topic_id, page_limit=page_limit)
-        filtered = filter_by_spotted_at(raw_spots, date_from_utc, date_to_utc)
-        for raw_spot in itertools.islice(filtered, max_images):
+        raw_spots = client.iter_spots(topic_id=topic_id, root_id=root_id, page_limit=page_limit)
+        site_filtered = filter_by_root_id(raw_spots, root_id)
+        date_filtered = filter_by_spotted_at(site_filtered, date_from_utc, date_to_utc)
+        for raw_spot in itertools.islice(date_filtered, max_images):
             observation_id = str(raw_spot.get("id") or raw_spot.get("observation_id") or "<unknown>")
             spotted_at = extract_spotted_at_utc(raw_spot)
             image_hint = peek_image_reference_or_url(raw_spot)
@@ -266,9 +297,10 @@ def run(
     failed = 0
 
     try:
-        raw_spots = client.iter_spots(topic_id=topic_id, page_limit=config.spotteron_page_limit)
-        filtered = filter_by_spotted_at(raw_spots, date_from_utc, date_to_utc)
-        limited = itertools.islice(filtered, max_images)
+        raw_spots = client.iter_spots(topic_id=topic_id, root_id=root_id, page_limit=config.spotteron_page_limit)
+        site_filtered = filter_by_root_id(raw_spots, root_id)
+        date_filtered = filter_by_spotted_at(site_filtered, date_from_utc, date_to_utc)
+        limited = itertools.islice(date_filtered, max_images)
 
         for raw_spot in limited:
             try:
@@ -395,8 +427,8 @@ def _ingest_one(
             observation_id=observation.observation_id,
             media_reference=observation.media_reference,
             captured_at_utc=observation.spotted_at_utc,
-            latitude=resolve_latitude(raw_spot),
-            longitude=resolve_longitude(raw_spot),
+            latitude=observation.latitude,
+            longitude=observation.longitude,
             contributor_attribution=(
                 observation.contributor_display_name if observation.contributor_attribution_permitted else None
             ),
@@ -459,8 +491,63 @@ def _write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
 
 
+def _report_preflight(checks: list[PreflightCheck]) -> int:
+    all_ok = True
+    for check in checks:
+        status = "PASS" if check.ok else "FAIL"
+        print(f"[{status}] {check.name}: {check.detail}")
+        all_ok = all_ok and check.ok
+    print("Preflight: ALL CHECKS PASSED" if all_ok else "Preflight: ONE OR MORE CHECKS FAILED")
+    return 0 if all_ok else 1
+
+
+def run_preflight(args: argparse.Namespace) -> int:
+    """Environment/connectivity checks only. Never contacts Gadi, never
+    downloads an image. Reused as-is even when SPOTTERON_BASE_URL or
+    COASTSNAP_STAGING_DIR aren't configured yet — those show up as
+    failed checks here rather than a crash, since the whole point of
+    this command is to surface exactly what's missing before a real run.
+    """
+    checks: list[PreflightCheck] = [check_python_version()]
+    checks.extend(check_python_dependencies())
+
+    exiftool_path = os.environ.get("EXIFTOOL_PATH") or "exiftool"
+    checks.append(check_exiftool_available(exiftool_path))
+    checks.append(check_exiftool_version(exiftool_path))
+    checks.append(check_exiftool_namespace_config(exiftool_path))
+
+    try:
+        config = WorkerConfig.from_env(staging_dir=Path(args.staging_dir) if args.staging_dir else None)
+    except ConfigError as exc:
+        checks.append(PreflightCheck("Worker configuration (SPOTTERON_BASE_URL / COASTSNAP_STAGING_DIR)", False, str(exc)))
+        return _report_preflight(checks)
+
+    checks.append(check_staging_dir_writable(config.staging_dir))
+    checks.append(check_staging_dir_disk_space(config.staging_dir))
+    checks.append(
+        check_spotteron_reachable(
+            config.spotteron_base_url,
+            config.spotteron_api_version,
+            config.spotteron_topic_id,
+            config.spotteron_bearer_token,
+        )
+    )
+    checks.append(check_bearer_token_configured(config.spotteron_bearer_token))
+    return _report_preflight(checks)
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(argv)
+
+    if args.preflight:
+        return run_preflight(args)
+
+    if not (args.root_id and args.date_from and args.date_to):
+        print(
+            "[config error] --root-id, --date-from and --date-to are required unless --preflight is given.",
+            file=sys.stderr,
+        )
+        return 2
 
     if args.delete_after_success:
         print(

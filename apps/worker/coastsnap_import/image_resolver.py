@@ -167,7 +167,7 @@ class ImageUrlResolver:
         self,
         image_base_url: str,
         bearer_token: Optional[str] = None,
-        timeout_seconds: float = 15.0,
+        timeout_seconds: float = 30.0,
         session: Optional[requests.Session] = None,
     ):
         self._image_base_url = image_base_url.rstrip("/")

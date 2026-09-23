@@ -27,7 +27,8 @@ from typing import Optional, Protocol
 
 from pydantic import BaseModel
 
-_CONFIG_PATH = Path(__file__).parent / "exiftool_config" / "auscin.config"
+EXIFTOOL_CONFIG_PATH = Path(__file__).parent / "exiftool_config" / "auscin.config"
+_CONFIG_PATH = EXIFTOOL_CONFIG_PATH  # kept as an internal alias; EXIFTOOL_CONFIG_PATH is the public name
 
 
 class MetadataEmbeddingError(Exception):

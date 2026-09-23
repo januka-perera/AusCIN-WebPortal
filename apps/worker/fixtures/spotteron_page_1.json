@@ -5,6 +5,7 @@
       "id": "1001",
       "type": "spot",
       "attributes": {
+        "root_id": "37",
         "spotted_at": "2026-08-01T02:15:00Z",
         "image_url": "https://cdn.example-spotteron.test/images/1001.jpg",
         "latitude": -33.45,
@@ -17,6 +18,7 @@
       "id": "1002",
       "type": "spot",
       "attributes": {
+        "root_id": "37",
         "spotted_at": "2026-08-05T03:05:00Z",
         "image_url": "https://cdn.example-spotteron.test/images/1002.jpg",
         "latitude": -33.45,

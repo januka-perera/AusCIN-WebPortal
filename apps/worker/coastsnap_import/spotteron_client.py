@@ -1,29 +1,48 @@
 """Spotteron API v2.4 client.
 
-Confirmed by the project owner: API version "v2.4", filtering by
-``topic_id`` (default 37), ``limit``/``page`` pagination, and a
-``spotted_at`` field used for (client-side) date filtering, plus
-optional bearer-token auth on top of public GET access.
+Confirmed against a REAL, live response (2026-09-23, GET
+https://www.spotteron.com/api/v2.4/spots?filter[topic_id]=37&limit=1&page=1,
+metadata only, no image downloaded):
 
-UNCONFIRMED (marked throughout, not invented):
-    - The exact response envelope shape. This client assumes a
-      JSON:API-ish shape (``{"data": [...]}``) because the existing
-      ``tools/check_spotteron_public_download.py`` script already
-      demonstrates a JSON:API-style query convention
-      (``filter[topic_id]=37&limit=1&page=1``) against a real
-      Spotteron URL — that script is prior art already in this repo,
-      not something invented here. If the real response differs,
-      ``_extract_spots`` is the single place to fix.
-    - The exact field names for a spot's attributes (lat/lon, image
-      URL, contributor name/consent) beyond ``spotted_at``. See
-      image_resolver.py for how those are resolved defensively.
-    - Whether the server honours a date-range filter at all. This
-      client does NOT rely on one — see filter_by_spotted_at() — it
-      always re-filters client-side, per the explicit scope item
-      "client-side filtering by spotted_at".
+    - Envelope shape: ``{"data": [...], "meta": {"page_count": ..., "total": ...}}``.
+    - Each item is ``{"id": <int>, "attributes": {...}}`` (no ``type`` key,
+      unlike this project's earlier synthetic fixtures).
+    - ``attributes.root_id`` is a real, present field (a JSON number) —
+      and critically, ``topic_id=37`` ALONE spans every CoastSnap site
+      globally (139,181 total spots across every ``root_id`` at the time
+      of this check). A single-site importer MUST also filter by
+      ``root_id``, both server-side (``filter[root_id]``, confirmed to
+      work: narrowed 139,181 -> 1,129 for one real root_id) and
+      client-side (``filter_by_root_id`` below) — the same
+      defense-in-depth pattern already used for ``spotted_at``, since a
+      bare ``root_id=...`` query param without the ``filter[]`` wrapper
+      was confirmed to silently NOT filter.
+    - ``attributes.spotted_at`` is ``"YYYY-MM-DD HH:MM:SS"`` (a space
+      separator, no "T", no timezone marker at all) — NOT a "Z"-suffixed
+      ISO-8601 string as earlier synthetic fixtures assumed.
+      ``datetime.fromisoformat`` (Python 3.11+) parses this correctly as
+      a naive datetime; this client then assumes it is already UTC (see
+      extract_spotted_at_utc) — the server's actual timezone convention
+      is NOT independently confirmed, only that this assumption is what
+      this codebase applies, per AGENTS.md's "use UTC internally" rule.
+    - ``attributes.image`` is an opaque reference (see image_resolver.py),
+      not a URL — confirmed separately.
 
-Pagination termination does not depend on the unconfirmed envelope
-shape: it stops as soon as a page returns fewer items than the
+STILL UNCONFIRMED (marked throughout, not invented):
+    - A stable "site name" field. The real response includes fields
+      such as ``fld_01_00001214`` holding a human-readable site label
+      (e.g. "CoastSnap Buddina (Australia)") — but ``fld_NN_NNNNNNNN``
+      keys are Spotteron's dynamic per-deployment custom-field IDs, not
+      a documented, stable API contract, and will differ across sites/
+      topics. This client deliberately does NOT read them: guessing a
+      dynamic field ID would be exactly the kind of invented API detail
+      this project avoids. ``SourceSite.name`` stays ``None`` until a
+      confirmed, stable field is identified.
+    - The exact field names for contributor name/attribution-consent.
+      See image_resolver.py for how those are resolved defensively.
+
+Pagination termination does not depend on the envelope's optional
+``meta`` block: it stops as soon as a page returns fewer items than the
 requested limit (or a page with zero items), which is correct
 regardless of whether ``meta``/``links`` are present.
 """
@@ -87,8 +106,11 @@ class SpotteronClient:
             headers["Authorization"] = f"Bearer {self._options.bearer_token}"
         return headers
 
-    def _get_page(self, topic_id: int, page: int, limit: int) -> dict[str, Any]:
-        params = {"filter[topic_id]": topic_id, "limit": limit, "page": page}
+    def _get_page(self, topic_id: int, root_id: str, page: int, limit: int) -> dict[str, Any]:
+        # filter[root_id] is required, not optional: a bare root_id=...
+        # param (without the filter[] wrapper) was confirmed NOT to
+        # filter server-side — see module docstring.
+        params = {"filter[topic_id]": topic_id, "filter[root_id]": root_id, "limit": limit, "page": page}
         last_error: Optional[Exception] = None
         for attempt in range(1, self._options.max_retries + 1):
             try:
@@ -131,10 +153,10 @@ class SpotteronClient:
     def _extract_spots(payload: dict[str, Any]) -> list[dict[str, Any]]:
         """Extracts the list of raw spot records from one page's response.
 
-        UNCONFIRMED envelope shape — see module docstring. Accepts
-        either a JSON:API-style ``{"data": [...]}`` envelope or a bare
-        list, and raises SpotteronResponseError for anything else
-        rather than guessing further.
+        Confirmed envelope shape — see module docstring — is
+        ``{"data": [...], "meta": {...}}``. A bare list is also accepted
+        defensively; anything else raises SpotteronResponseError rather
+        than guessing further.
         """
         if isinstance(payload, list):
             return payload
@@ -145,11 +167,14 @@ class SpotteronClient:
             f"list 'data' key, got keys={list(payload.keys()) if isinstance(payload, dict) else type(payload)!r}"
         )
 
-    def iter_spots(self, topic_id: int, page_limit: int) -> Iterator[dict[str, Any]]:
-        """Yields raw spot dicts across all pages for ``topic_id``, oldest pagination order as returned by the API."""
+    def iter_spots(self, topic_id: int, root_id: str, page_limit: int) -> Iterator[dict[str, Any]]:
+        """Yields raw spot dicts across all pages for ``topic_id`` AND
+        ``root_id`` (both sent as server-side ``filter[...]`` params —
+        see module docstring for why ``root_id`` is not optional),
+        oldest pagination order as returned by the API."""
         page = 1
         while True:
-            payload = self._get_page(topic_id, page, page_limit)
+            payload = self._get_page(topic_id, root_id, page, page_limit)
             spots = self._extract_spots(payload)
             if not spots:
                 return
@@ -157,6 +182,38 @@ class SpotteronClient:
             if len(spots) < page_limit:
                 return  # short page => last page, regardless of any meta/links shape
             page += 1
+
+
+def extract_root_id(raw_spot: dict[str, Any]) -> Optional[str]:
+    """Reads the confirmed ``attributes.root_id`` field (falling back to
+    a top-level ``root_id`` in case the envelope shape varies) and
+    returns it as a string, since Spotteron returns it as a JSON
+    number. None if absent — such records are excluded by
+    filter_by_root_id, never silently assumed to match.
+    """
+    raw_value = raw_spot.get("root_id")
+    if raw_value is None and isinstance(raw_spot.get("attributes"), dict):
+        raw_value = raw_spot["attributes"].get("root_id")
+    if raw_value is None:
+        return None
+    return str(raw_value)
+
+
+def filter_by_root_id(spots: Iterable[dict[str, Any]], root_id: str) -> Iterator[dict[str, Any]]:
+    """Client-side site filtering, applied regardless of whether the
+    server's ``filter[root_id]`` parameter actually took effect.
+
+    Confirmed against a real Spotteron v2.4 response that ``topic_id=37``
+    alone spans every CoastSnap site globally (139,181 spots across every
+    root_id at the time of checking) — so this is not optional the way
+    filter_by_spotted_at's server-side counterpart might arguably be;
+    without it, a "single-site" run would silently ingest observations
+    from other sites entirely.
+    """
+    root_id_str = str(root_id)
+    for spot in spots:
+        if extract_root_id(spot) == root_id_str:
+            yield spot
 
 
 def extract_spotted_at_utc(raw_spot: dict[str, Any]) -> Optional[datetime]:

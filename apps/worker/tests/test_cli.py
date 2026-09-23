@@ -77,6 +77,37 @@ def test_main_missing_config_exits_2_without_network_call(monkeypatch: pytest.Mo
     assert exit_code == 2
 
 
+def test_preflight_does_not_require_root_id_or_date_range(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("SPOTTERON_BASE_URL", raising=False)
+    monkeypatch.delenv("COASTSNAP_STAGING_DIR", raising=False)
+    # No --root-id/--date-from/--date-to given at all: must not error on
+    # missing required args the way every other mode does.
+    exit_code = cli.main(["--preflight"])
+    assert exit_code == 1  # config genuinely isn't set in this test env, but it didn't crash on missing args
+
+
+@responses.activate
+def test_preflight_passes_and_makes_exactly_one_spotteron_call(base_env: Path, monkeypatch: pytest.MonkeyPatch):
+    responses.add(responses.GET, SPOTS_URL, json={"data": []}, status=200)
+    monkeypatch.setattr(cli, "ParamikoSshSftpTransport", _no_transport)
+    monkeypatch.setattr(cli, "ParamikoReadBackSftpTransport", _no_transport)
+
+    exit_code = cli.main(["--preflight"])
+
+    assert exit_code == 0
+    assert len(responses.calls) == 1  # exactly one bounded metadata request, no image, no Gadi
+    assert not (base_env / "level-0").exists()  # no pipeline files written
+
+
+def test_preflight_fails_cleanly_when_config_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.delenv("SPOTTERON_BASE_URL", raising=False)
+    monkeypatch.delenv("COASTSNAP_STAGING_DIR", raising=False)
+    # Deliberately no @responses.activate: missing SPOTTERON_BASE_URL
+    # must be reported as a failed check, not attempted as a request.
+    exit_code = cli.main(["--preflight", "--staging-dir", str(tmp_path / "staging")])
+    assert exit_code == 1
+
+
 @responses.activate
 def test_plan_only_does_not_write_files(base_env: Path):
     _mock_spots_page()
@@ -232,6 +263,48 @@ def test_max_images_limits_processed_count(base_env: Path):
     assert exit_code == 0
     manifest = json.loads((base_env / "manifests" / "37.json").read_text())
     assert len(manifest["entries"]) == 1
+
+
+@responses.activate
+def test_process_local_handles_real_live_response_shape(base_env: Path):
+    """Uses spotteron_live_shape_page.json, modelled directly on a real
+    captured Spotteron v2.4 response: envelope has a top-level "meta"
+    block, each item has no "type" key, spotted_at is space-separated
+    with no timezone marker, root_id is a JSON number, and the page
+    contains a SECOND spot from a different (real) root_id — proving
+    filter_by_root_id actually excludes cross-site observations rather
+    than just filter_by_spotted_at doing all the work.
+    """
+    responses.add(responses.GET, SPOTS_URL, json=load_fixture("spotteron_live_shape_page.json"), status=200)
+    live_image_url = "https://files.spotteron.com/images/spots/000037/2026/09/23/gkckxusp53of89ksukepgv6x6rwx7o7v.jpg"
+    responses.add(responses.HEAD, live_image_url, status=200, content_type="image/jpeg")
+    responses.add(responses.GET, live_image_url, body=SAMPLE_IMAGE_BYTES, status=200, content_type="image/jpeg")
+
+    exit_code = cli.main(
+        [
+            "--root-id", "487447", "--date-from", "2026-09-01", "--date-to", "2026-09-30",
+            "--process-local", "--max-images", "5",
+        ]
+    )
+
+    assert exit_code == 0
+    manifest = json.loads((base_env / "manifests" / "487447.json").read_text())
+    # Only the root_id=487447 spot is present — the root_id=1085047 spot
+    # from a different site must never appear, even though it matched
+    # topic_id and the date range.
+    assert len(manifest["entries"]) == 1
+    entry = manifest["entries"][0]
+    assert entry["observation"]["observation_id"] == "1351374"
+    assert entry["observation"]["root_id"] == "487447"
+    # Preserved on the observation itself, not just transiently used for
+    # metadata embedding — there is no separate Spotteron "site" record
+    # for this to otherwise live on.
+    assert entry["observation"]["latitude"] == -26.681912
+    assert entry["observation"]["longitude"] == 153.137469
+    # Parsed correctly from the real "YYYY-MM-DD HH:MM:SS" (no "T", no
+    # timezone) format into the expected date-partitioned path.
+    level0_file = base_env / "level-0" / "487447" / "2026" / "09" / "23" / "images" / "1351374.jpg"
+    assert level0_file.read_bytes() == SAMPLE_IMAGE_BYTES
 
 
 def test_delete_after_success_is_rejected_before_any_network_call(base_env: Path):

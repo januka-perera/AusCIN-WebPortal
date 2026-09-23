@@ -77,6 +77,9 @@ class SourceObservation(BaseModel):
     root_id: str
     spotted_at_utc: Optional[datetime] = None
     """Parsed from the raw record's ``spotted_at`` field. None if absent/unparseable — such records are excluded from date filtering rather than guessed at."""
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    """Preserved on the observation itself (not just embedded into Level 1's metadata) since there is no separate, confirmed Spotteron "site" resource this could otherwise live on — see spotteron_client.py's module docstring."""
     image_url: Optional[str] = None
     """As resolved by image_resolver.py; may be None if resolution failed."""
     media_reference: Optional[str] = None
