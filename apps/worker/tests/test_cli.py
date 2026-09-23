@@ -144,8 +144,8 @@ def test_process_local_full_pipeline(base_env: Path, monkeypatch: pytest.MonkeyP
     )
 
     assert exit_code == 0
-    level0_file = base_env / "level-0" / "37" / "2026" / "08" / "01" / "images" / "1001.jpg"
-    level1_file = base_env / "level-1" / "37" / "2026" / "08" / "01" / "images" / "1001.jpg"
+    level0_file = base_env / "level-0" / "root-37" / "2026" / "08" / "01" / "images" / "1001.jpg"
+    level1_file = base_env / "level-1" / "root-37" / "2026" / "08" / "01" / "images" / "1001.jpg"
     assert level0_file.read_bytes() == SAMPLE_IMAGE_BYTES
     assert level1_file.exists()
 
@@ -169,6 +169,70 @@ def test_transfer_requires_transfer_configuration(base_env: Path):
     assert exit_code == 2
 
 
+def test_transfer_refuses_production_remote_root_without_confirmation(
+    base_env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    # Deliberately no @responses.activate / no mocks registered: the
+    # production-root guard must reject this before any Spotteron or
+    # SFTP call is made, exactly like a missing-config rejection.
+    key_path = tmp_path / "id_ed25519"
+    key_path.write_text("not a real key")
+    monkeypatch.setenv("GADI_SFTP_HOST", "gadi.example.test")
+    monkeypatch.setenv("GADI_SFTP_USERNAME", "ausc-ingest")
+    monkeypatch.setenv("GADI_SFTP_PRIVATE_KEY_PATH", str(key_path))
+    # GADI_REMOTE_ROOT deliberately left unset: falls back to the
+    # default, which is itself under /g/data/qu34 (production).
+    monkeypatch.setattr(cli, "ParamikoSshSftpTransport", _no_transport)
+
+    exit_code = cli.main(
+        ["--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31", "--transfer", "--max-images", "1"]
+    )
+
+    assert exit_code == 2
+
+
+@responses.activate
+def test_transfer_allows_production_remote_root_with_explicit_confirmation(
+    base_env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    _mock_spots_page()
+    _mock_image_downloads()
+    key_path = tmp_path / "id_ed25519"
+    key_path.write_text("not a real key")
+    monkeypatch.setenv("GADI_SFTP_HOST", "gadi.example.test")
+    monkeypatch.setenv("GADI_SFTP_USERNAME", "ausc-ingest")
+    monkeypatch.setenv("GADI_SFTP_PRIVATE_KEY_PATH", str(key_path))
+    monkeypatch.setattr(cli, "ParamikoSshSftpTransport", lambda options: FakeSshSftpTransport())
+
+    exit_code = cli.main(
+        [
+            "--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31",
+            "--transfer", "--max-images", "1", "--confirm-production-remote-root",
+        ]
+    )
+
+    assert exit_code == 0
+
+
+def test_transfer_refuses_blank_remote_root(base_env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    key_path = tmp_path / "id_ed25519"
+    key_path.write_text("not a real key")
+    monkeypatch.setenv("GADI_SFTP_HOST", "gadi.example.test")
+    monkeypatch.setenv("GADI_SFTP_USERNAME", "ausc-ingest")
+    monkeypatch.setenv("GADI_SFTP_PRIVATE_KEY_PATH", str(key_path))
+    monkeypatch.setenv("GADI_REMOTE_ROOT", "   ")
+    monkeypatch.setattr(cli, "ParamikoSshSftpTransport", _no_transport)
+
+    exit_code = cli.main(
+        [
+            "--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31",
+            "--transfer", "--max-images", "1", "--confirm-production-remote-root",
+        ]
+    )
+
+    assert exit_code == 2
+
+
 @responses.activate
 def test_transfer_verifies_and_renames(base_env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     _mock_spots_page()
@@ -178,6 +242,7 @@ def test_transfer_verifies_and_renames(base_env: Path, monkeypatch: pytest.Monke
     monkeypatch.setenv("GADI_SFTP_HOST", "gadi.example.test")
     monkeypatch.setenv("GADI_SFTP_USERNAME", "ausc-ingest")
     monkeypatch.setenv("GADI_SFTP_PRIVATE_KEY_PATH", str(key_path))
+    monkeypatch.setenv("GADI_REMOTE_ROOT", "/scratch/ausc-ingest/coastsnap-test")  # non-production: no override flag needed
 
     fake_transport = FakeSshSftpTransport()
     monkeypatch.setattr(cli, "ParamikoSshSftpTransport", lambda options: fake_transport)
@@ -204,6 +269,7 @@ def test_idempotent_rerun_skips_without_reuploading(base_env: Path, monkeypatch:
     monkeypatch.setenv("GADI_SFTP_HOST", "gadi.example.test")
     monkeypatch.setenv("GADI_SFTP_USERNAME", "ausc-ingest")
     monkeypatch.setenv("GADI_SFTP_PRIVATE_KEY_PATH", str(key_path))
+    monkeypatch.setenv("GADI_REMOTE_ROOT", "/scratch/ausc-ingest/coastsnap-test")  # non-production: no override flag needed
 
     args = [
         "--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31",
@@ -237,8 +303,8 @@ def test_corrupted_local_level0_file_triggers_redownload_on_rerun(base_env: Path
     ]
 
     assert cli.main(args) == 0
-    level0_file = base_env / "level-0" / "37" / "2026" / "08" / "01" / "images" / "1001.jpg"
-    level1_file = base_env / "level-1" / "37" / "2026" / "08" / "01" / "images" / "1001.jpg"
+    level0_file = base_env / "level-0" / "root-37" / "2026" / "08" / "01" / "images" / "1001.jpg"
+    level1_file = base_env / "level-1" / "root-37" / "2026" / "08" / "01" / "images" / "1001.jpg"
     assert level0_file.read_bytes() == SAMPLE_IMAGE_BYTES
 
     # Simulate on-disk corruption: the recorded checksum no longer matches.
@@ -301,9 +367,20 @@ def test_process_local_handles_real_live_response_shape(base_env: Path):
     # for this to otherwise live on.
     assert entry["observation"]["latitude"] == -26.681912
     assert entry["observation"]["longitude"] == 153.137469
+    # Both the raw source value and the normalised UTC value are shown
+    # in the manifest — the real format has no timezone marker at all.
+    assert entry["observation"]["spotted_at_raw"] == "2026-09-23 14:57:28"
+    assert entry["observation"]["spotted_at_utc"] == "2026-09-23T14:57:28Z"
+    # No stable "site name" field exists in the real API (fld_01_00001214
+    # is a dynamic, per-deployment field, never treated as a schema
+    # field — see spotteron_client.py) — site.name stays None, and the
+    # directory identity is still deterministic ("root-487447"), not
+    # derived from any dynamic field.
+    assert entry["site"]["name"] is None
+    assert entry["site"]["root_id"] == "487447"
     # Parsed correctly from the real "YYYY-MM-DD HH:MM:SS" (no "T", no
     # timezone) format into the expected date-partitioned path.
-    level0_file = base_env / "level-0" / "487447" / "2026" / "09" / "23" / "images" / "1351374.jpg"
+    level0_file = base_env / "level-0" / "root-487447" / "2026" / "09" / "23" / "images" / "1351374.jpg"
     assert level0_file.read_bytes() == SAMPLE_IMAGE_BYTES
 
 

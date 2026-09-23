@@ -21,10 +21,33 @@ metadata only, no image downloaded):
       separator, no "T", no timezone marker at all) — NOT a "Z"-suffixed
       ISO-8601 string as earlier synthetic fixtures assumed.
       ``datetime.fromisoformat`` (Python 3.11+) parses this correctly as
-      a naive datetime; this client then assumes it is already UTC (see
-      extract_spotted_at_utc) — the server's actual timezone convention
-      is NOT independently confirmed, only that this assumption is what
-      this codebase applies, per AGENTS.md's "use UTC internally" rule.
+      a naive datetime. Its timezone is NOT independently confirmed —
+      see the "Timestamp interpretation policy" section below. This
+      client never silently assumes UTC without saying so.
+
+Timestamp interpretation policy (explicit, documented, overridable —
+not a silent guess):
+
+    The real, timezone-less ``spotted_at`` string is interpreted using
+    the IANA zone name configured as ``SPOTTERON_SOURCE_TIMEZONE`` (see
+    config.py), applied via ``extract_spotted_at_utc(raw_spot,
+    source_timezone=...)`` before converting to UTC. The default is
+    ``"UTC"`` — this is an explicit, documented assumption (Spotteron's
+    actual server-side timezone convention has not been confirmed by
+    the project owner), not a silent claim of fact. Operators who
+    confirm the real convention (e.g. the CoastSnap web app's own
+    display timezone, or a value obtained directly from Spotteron) can
+    override it, e.g. ``SPOTTERON_SOURCE_TIMEZONE=Australia/Brisbane``.
+
+    If a ``spotted_at`` string ever DOES carry an explicit UTC offset
+    (a trailing "Z" or "+HH:MM"), that offset is trusted directly and
+    ``SPOTTERON_SOURCE_TIMEZONE`` is not applied — it only affects
+    timezone-less strings, which is the confirmed real case today.
+
+    Both the raw, unconverted string (``extract_spotted_at_raw``) and
+    the normalised UTC value (``extract_spotted_at_utc``) are preserved
+    on ``SourceObservation``/the manifest, so the original source value
+    remains auditable regardless of which timezone was assumed.
     - ``attributes.image`` is an opaque reference (see image_resolver.py),
       not a URL — confirmed separately.
 
@@ -53,8 +76,11 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable, Iterator, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
+
+DEFAULT_SOURCE_TIMEZONE = "UTC"
 
 
 class SpotteronClientError(Exception):
@@ -216,33 +242,62 @@ def filter_by_root_id(spots: Iterable[dict[str, Any]], root_id: str) -> Iterator
             yield spot
 
 
-def extract_spotted_at_utc(raw_spot: dict[str, Any]) -> Optional[datetime]:
-    """Reads the confirmed ``spotted_at`` field (top-level or, if the
-    envelope turns out to be JSON:API-nested, under ``attributes``) and
-    parses it as UTC. Returns None (rather than guessing) if absent or
-    unparseable — such spots are excluded by filter_by_spotted_at,
-    never silently included.
-    """
+def extract_spotted_at_raw(raw_spot: dict[str, Any]) -> Optional[str]:
+    """Returns the raw, unparsed ``spotted_at`` string exactly as
+    received (e.g. ``"2026-09-23 14:57:28"``) — no timezone applied, no
+    parsing attempted. Preserved on the manifest alongside the
+    normalised UTC value (see extract_spotted_at_utc) so the original
+    source value is always auditable, whatever timezone was assumed."""
     raw_value = raw_spot.get("spotted_at")
     if raw_value is None and isinstance(raw_spot.get("attributes"), dict):
         raw_value = raw_spot["attributes"].get("spotted_at")
-    if not isinstance(raw_value, str):
+    return raw_value if isinstance(raw_value, str) else None
+
+
+def extract_spotted_at_utc(
+    raw_spot: dict[str, Any], source_timezone: str = DEFAULT_SOURCE_TIMEZONE
+) -> Optional[datetime]:
+    """Parses ``spotted_at`` and returns it normalised to UTC. See this
+    module's "Timestamp interpretation policy" docstring section for
+    the full policy. In short:
+
+    - A string with an explicit UTC offset ("Z" or "+HH:MM") is trusted
+      as-is; ``source_timezone`` is not applied.
+    - A timezone-less string (the confirmed real case) is interpreted
+      in ``source_timezone`` (an IANA zone name; see
+      config.py's SPOTTERON_SOURCE_TIMEZONE) before converting to UTC.
+
+    Returns None (rather than guessing) if the field is absent, the
+    string is unparseable, or ``source_timezone`` is not a valid IANA
+    zone name — such spots are excluded by filter_by_spotted_at, never
+    silently included with a guessed time.
+    """
+    raw_value = extract_spotted_at_raw(raw_spot)
+    if raw_value is None:
         return None
     try:
         value = datetime.fromisoformat(raw_value.replace("Z", "+00:00"))
     except ValueError:
         return None
     if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
+        try:
+            value = value.replace(tzinfo=ZoneInfo(source_timezone))
+        except ZoneInfoNotFoundError:
+            return None
     return value.astimezone(timezone.utc)
 
 
 def filter_by_spotted_at(
-    spots: Iterable[dict[str, Any]], date_from_utc: datetime, date_to_utc: datetime
+    spots: Iterable[dict[str, Any]],
+    date_from_utc: datetime,
+    date_to_utc: datetime,
+    source_timezone: str = DEFAULT_SOURCE_TIMEZONE,
 ) -> Iterator[dict[str, Any]]:
-    """Client-side date filtering, applied regardless of whether the server also filtered."""
+    """Client-side date filtering, applied regardless of whether the
+    server also filtered. See extract_spotted_at_utc for the
+    timezone-interpretation policy applied to timezone-less timestamps."""
     for spot in spots:
-        spotted_at = extract_spotted_at_utc(spot)
+        spotted_at = extract_spotted_at_utc(spot, source_timezone=source_timezone)
         if spotted_at is None:
             continue
         if date_from_utc <= spotted_at <= date_to_utc:

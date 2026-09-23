@@ -60,6 +60,7 @@ from .preflight import (
     check_exiftool_available,
     check_exiftool_namespace_config,
     check_exiftool_version,
+    check_gadi_configuration_status,
     check_python_dependencies,
     check_python_version,
     check_spotteron_reachable,
@@ -87,6 +88,7 @@ from .models import (
     TransferState,
     build_level_relative_path,
     build_manifest_relative_path,
+    build_site_directory_id,
     build_source_record_paths,
 )
 from .processor import Level0Level1Processor, ProcessingError, compute_sha256, infer_extension
@@ -102,6 +104,7 @@ from .spotteron_client import (
     SpotteronClient,
     SpotteronClientError,
     SpotteronClientOptions,
+    extract_spotted_at_raw,
     extract_spotted_at_utc,
     filter_by_root_id,
     filter_by_spotted_at,
@@ -143,6 +146,12 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "--transfer", action="store_true",
         help="Process locally and transfer to Gadi via SFTP. Requires Gadi SFTP configuration.",
     )
+    parser.add_argument(
+        "--confirm-production-remote-root", action="store_true",
+        help="Required in addition to --transfer if GADI_REMOTE_ROOT is under the production "
+        "NCI project storage (/g/data/qu34). Without it, --transfer refuses to run against a "
+        "production-looking remote root.",
+    )
 
     parser.add_argument("--no-delete", action="store_true", help="Explicitly confirm no deletion (this is always the case in this version).")
     parser.add_argument("--delete-after-success", action="store_true", help="Rejected: deletion is not implemented in this version.")
@@ -182,7 +191,7 @@ def _parse_utc_date_range(date_from: str, date_to: str) -> tuple[datetime, datet
     return start, end
 
 
-def _parse_observation(raw_spot: dict, root_id: str) -> SourceObservation:
+def _parse_observation(raw_spot: dict, root_id: str, source_timezone: str) -> SourceObservation:
     observation_id = str(raw_spot.get("id") or raw_spot.get("observation_id") or "")
     if not observation_id:
         raise ProcessingError(f"Spot record has no usable id: {raw_spot!r}")
@@ -190,7 +199,8 @@ def _parse_observation(raw_spot: dict, root_id: str) -> SourceObservation:
     return SourceObservation(
         observation_id=observation_id,
         root_id=root_id,
-        spotted_at_utc=extract_spotted_at_utc(raw_spot),
+        spotted_at_raw=extract_spotted_at_raw(raw_spot),
+        spotted_at_utc=extract_spotted_at_utc(raw_spot, source_timezone=source_timezone),
         latitude=resolve_latitude(raw_spot),
         longitude=resolve_longitude(raw_spot),
         image_url=None,  # resolved separately; failures there must not stop parsing
@@ -202,7 +212,7 @@ def _parse_observation(raw_spot: dict, root_id: str) -> SourceObservation:
 
 def _run_plan_only(
     client: SpotteronClient, *, root_id: str, topic_id: int, date_from_utc: datetime, date_to_utc: datetime,
-    max_images: int, page_limit: int,
+    max_images: int, page_limit: int, source_timezone: str,
 ) -> int:
     """Fetches Spotteron metadata only. Never downloads an image, never
     writes a local file, never touches Gadi."""
@@ -210,12 +220,17 @@ def _run_plan_only(
     try:
         raw_spots = client.iter_spots(topic_id=topic_id, root_id=root_id, page_limit=page_limit)
         site_filtered = filter_by_root_id(raw_spots, root_id)
-        date_filtered = filter_by_spotted_at(site_filtered, date_from_utc, date_to_utc)
+        date_filtered = filter_by_spotted_at(site_filtered, date_from_utc, date_to_utc, source_timezone=source_timezone)
         for raw_spot in itertools.islice(date_filtered, max_images):
             observation_id = str(raw_spot.get("id") or raw_spot.get("observation_id") or "<unknown>")
-            spotted_at = extract_spotted_at_utc(raw_spot)
+            spotted_at_raw = extract_spotted_at_raw(raw_spot)
+            spotted_at = extract_spotted_at_utc(raw_spot, source_timezone=source_timezone)
             image_hint = peek_image_reference_or_url(raw_spot)
-            print(f"[plan] root_id={root_id} observation_id={observation_id} spotted_at_utc={spotted_at} image_reference_or_url={image_hint!r}")
+            print(
+                f"[plan] root_id={root_id} observation_id={observation_id} "
+                f"spotted_at_raw={spotted_at_raw!r} spotted_at_utc={spotted_at} "
+                f"image_reference_or_url={image_hint!r}"
+            )
             count += 1
     except SpotteronClientError as exc:
         print(f"[fatal] Spotteron request failed: {exc}", file=sys.stderr)
@@ -227,11 +242,11 @@ def _run_plan_only(
 
 def run(
     config: WorkerConfig, *, root_id: str, topic_id: int, date_from_utc: datetime, date_to_utc: datetime,
-    max_images: int, manifest_path: Path, mode: RunMode,
+    max_images: int, manifest_path: Path, mode: RunMode, allow_production_remote_root: bool = False,
 ) -> int:
     """Runs the pipeline once. Returns a process exit code (0 = no failures)."""
     if mode is RunMode.TRANSFER:
-        config.require_transfer_fields()
+        config.require_transfer_fields(allow_production_remote_root=allow_production_remote_root)
 
     client = SpotteronClient(
         SpotteronClientOptions(
@@ -245,6 +260,7 @@ def run(
         return _run_plan_only(
             client, root_id=root_id, topic_id=topic_id, date_from_utc=date_from_utc, date_to_utc=date_to_utc,
             max_images=max_images, page_limit=config.spotteron_page_limit,
+            source_timezone=config.spotteron_source_timezone,
         )
 
     manifest_store = ManifestStore()
@@ -299,12 +315,14 @@ def run(
     try:
         raw_spots = client.iter_spots(topic_id=topic_id, root_id=root_id, page_limit=config.spotteron_page_limit)
         site_filtered = filter_by_root_id(raw_spots, root_id)
-        date_filtered = filter_by_spotted_at(site_filtered, date_from_utc, date_to_utc)
+        date_filtered = filter_by_spotted_at(
+            site_filtered, date_from_utc, date_to_utc, source_timezone=config.spotteron_source_timezone
+        )
         limited = itertools.islice(date_filtered, max_images)
 
         for raw_spot in limited:
             try:
-                observation = _parse_observation(raw_spot, root_id)
+                observation = _parse_observation(raw_spot, root_id, config.spotteron_source_timezone)
             except ProcessingError as exc:
                 print(f"[error] {exc}", file=sys.stderr)
                 failed += 1
@@ -403,8 +421,9 @@ def _ingest_one(
 
     level0_id = f"{observation.observation_id}-L0"
     filename = f"{observation.observation_id}{_infer_suffix(image_url)}"
-    level0_remote_relative = build_level_relative_path(ProductLevel.LEVEL_0, root_id, observation.spotted_at_utc, filename)
-    level1_remote_relative = build_level_relative_path(ProductLevel.LEVEL_1, root_id, observation.spotted_at_utc, filename)
+    site_directory_id = build_site_directory_id(root_id)
+    level0_remote_relative = build_level_relative_path(ProductLevel.LEVEL_0, site_directory_id, observation.spotted_at_utc, filename)
+    level1_remote_relative = build_level_relative_path(ProductLevel.LEVEL_1, site_directory_id, observation.spotted_at_utc, filename)
 
     # --- Level 0: reuse the existing download if it's still intact. ---
     level0 = existing_entry.level0 if existing_entry else None
@@ -533,6 +552,7 @@ def run_preflight(args: argparse.Namespace) -> int:
         )
     )
     checks.append(check_bearer_token_configured(config.spotteron_bearer_token))
+    checks.append(check_gadi_configuration_status(config.gadi_sftp_host, config.gadi_sftp_username))
     return _report_preflight(checks)
 
 
@@ -585,6 +605,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             max_images=args.max_images,
             manifest_path=manifest_path,
             mode=mode,
+            allow_production_remote_root=args.confirm_production_remote_root,
         )
     except ConfigError as exc:
         print(f"[config error] {exc}", file=sys.stderr)

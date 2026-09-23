@@ -17,6 +17,7 @@ from coastsnap_import.preflight import (
     check_exiftool_available,
     check_exiftool_namespace_config,
     check_exiftool_version,
+    check_gadi_configuration_status,
     check_python_dependencies,
     check_python_version,
     check_spotteron_reachable,
@@ -186,3 +187,18 @@ def test_bearer_token_check_passes_when_not_set():
     check = check_bearer_token_configured(None)
     assert check.ok is True
     assert "not set" in check.detail
+
+
+def test_gadi_configuration_status_is_informational_when_absent():
+    check = check_gadi_configuration_status(None, None)
+    assert check.ok is True
+    assert "absent" in check.detail
+
+
+def test_gadi_configuration_status_is_informational_when_present():
+    # Presence must never fail the check: --process-local ignores Gadi
+    # config entirely regardless of whether it happens to be set.
+    check = check_gadi_configuration_status("gadi.example.test", "ausc-ingest")
+    assert check.ok is True
+    assert "present" in check.detail
+    assert "gadi.example.test" not in check.detail  # host value itself isn't echoed back, just presence

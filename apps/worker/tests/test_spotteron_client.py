@@ -131,8 +131,69 @@ def test_filter_by_spotted_at_excludes_out_of_range_and_missing():
 
 def test_extract_spotted_at_parses_real_space_separated_format_no_timezone():
     # Confirmed real shape (2026-09-23): "YYYY-MM-DD HH:MM:SS", no "T", no timezone marker.
+    # Default source_timezone is "UTC" — see the "Timestamp interpretation policy" docstring.
     value = extract_spotted_at_utc({"attributes": {"spotted_at": "2026-09-23 14:57:28"}})
     assert value == datetime(2026, 9, 23, 14, 57, 28, tzinfo=timezone.utc)
+
+
+def test_extract_spotted_at_timezone_less_uses_default_utc_explicitly():
+    # Same as above, but spelled out explicitly rather than relying on the default parameter.
+    value = extract_spotted_at_utc({"attributes": {"spotted_at": "2026-09-23 14:57:28"}}, source_timezone="UTC")
+    assert value == datetime(2026, 9, 23, 14, 57, 28, tzinfo=timezone.utc)
+
+
+def test_extract_spotted_at_timezone_less_applies_configured_source_timezone():
+    # Brisbane is UTC+10 year-round (no DST) — a deterministic, easy-to-verify offset.
+    value = extract_spotted_at_utc(
+        {"attributes": {"spotted_at": "2026-09-23 14:57:28"}}, source_timezone="Australia/Brisbane"
+    )
+    assert value == datetime(2026, 9, 23, 4, 57, 28, tzinfo=timezone.utc)
+
+
+def test_extract_spotted_at_with_explicit_utc_offset_ignores_configured_source_timezone():
+    # A string that already carries an explicit offset/Z is trusted directly;
+    # source_timezone must NOT be applied on top of it.
+    value = extract_spotted_at_utc(
+        {"attributes": {"spotted_at": "2026-09-23T14:57:28Z"}}, source_timezone="Australia/Brisbane"
+    )
+    assert value == datetime(2026, 9, 23, 14, 57, 28, tzinfo=timezone.utc)
+
+    value_with_offset = extract_spotted_at_utc(
+        {"attributes": {"spotted_at": "2026-09-23T14:57:28+05:00"}}, source_timezone="Australia/Brisbane"
+    )
+    assert value_with_offset == datetime(2026, 9, 23, 9, 57, 28, tzinfo=timezone.utc)
+
+
+def test_extract_spotted_at_invalid_configured_timezone_returns_none_not_a_crash():
+    value = extract_spotted_at_utc(
+        {"attributes": {"spotted_at": "2026-09-23 14:57:28"}}, source_timezone="Not/A_Real_Zone"
+    )
+    assert value is None
+
+
+def test_extract_spotted_at_raw_preserves_original_string_unconverted():
+    from coastsnap_import.spotteron_client import extract_spotted_at_raw
+
+    assert extract_spotted_at_raw({"attributes": {"spotted_at": "2026-09-23 14:57:28"}}) == "2026-09-23 14:57:28"
+    assert extract_spotted_at_raw({"attributes": {}}) is None
+    assert extract_spotted_at_raw({}) is None
+
+
+def test_filter_by_spotted_at_date_range_boundaries_with_source_timezone():
+    # A spot at 2026-09-23 23:30:00 Brisbane time (UTC+10) is
+    # 2026-09-23T13:30:00Z — just inside a UTC boundary that would
+    # otherwise exclude it if the timezone were (wrongly) ignored.
+    spots = [
+        {"id": "in-range", "attributes": {"spotted_at": "2026-09-23 23:30:00"}},  # -> 2026-09-23T13:30:00Z
+        {"id": "just-before", "attributes": {"spotted_at": "2026-09-23 09:59:59"}},  # -> 2026-09-22T23:59:59Z
+        {"id": "just-after", "attributes": {"spotted_at": "2026-09-24 10:00:01"}},  # -> 2026-09-24T00:00:01Z
+    ]
+    date_from = datetime(2026, 9, 23, 0, 0, 0, tzinfo=timezone.utc)
+    date_to = datetime(2026, 9, 24, 0, 0, 0, tzinfo=timezone.utc)
+
+    result = list(filter_by_spotted_at(spots, date_from, date_to, source_timezone="Australia/Brisbane"))
+
+    assert [s["id"] for s in result] == ["in-range"]
 
 
 def test_extract_root_id_reads_attributes_root_id():

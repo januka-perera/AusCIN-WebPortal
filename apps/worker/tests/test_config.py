@@ -75,6 +75,7 @@ def test_require_transfer_fields_passes_when_present(tmp_path: Path):
         gadi_sftp_host="gadi.example.test",
         gadi_sftp_username="ausc-ingest",
         gadi_sftp_private_key_path=key_path,
+        remote_root="/scratch/ausc-ingest/coastsnap-test",  # non-production: no override flag needed
     )
     config.require_transfer_fields()  # must not raise
 
@@ -85,6 +86,76 @@ def test_require_transfer_fields_raises_when_key_file_missing(tmp_path: Path):
         gadi_sftp_host="gadi.example.test",
         gadi_sftp_username="ausc-ingest",
         gadi_sftp_private_key_path=tmp_path / "does-not-exist",
+        remote_root="/scratch/ausc-ingest/coastsnap-test",
     )
     with pytest.raises(ConfigError, match="does not exist"):
         config.require_transfer_fields()
+
+
+def test_require_transfer_fields_refuses_production_remote_root_by_default(tmp_path: Path):
+    key_path = tmp_path / "id_ed25519"
+    key_path.write_text("not a real key, just needs to exist")
+    config = WorkerConfig.from_env(
+        env={"SPOTTERON_BASE_URL": "https://example-spotteron.test", "COASTSNAP_STAGING_DIR": str(tmp_path)},
+        gadi_sftp_host="gadi.example.test",
+        gadi_sftp_username="ausc-ingest",
+        gadi_sftp_private_key_path=key_path,
+        # remote_root left at its default: /g/data/qu34/AusCIN/coastsnap-test
+    )
+    with pytest.raises(ConfigError, match="production"):
+        config.require_transfer_fields()
+
+
+def test_require_transfer_fields_allows_production_remote_root_with_explicit_override(tmp_path: Path):
+    key_path = tmp_path / "id_ed25519"
+    key_path.write_text("not a real key, just needs to exist")
+    config = WorkerConfig.from_env(
+        env={"SPOTTERON_BASE_URL": "https://example-spotteron.test", "COASTSNAP_STAGING_DIR": str(tmp_path)},
+        gadi_sftp_host="gadi.example.test",
+        gadi_sftp_username="ausc-ingest",
+        gadi_sftp_private_key_path=key_path,
+    )
+    config.require_transfer_fields(allow_production_remote_root=True)  # must not raise
+
+
+def test_require_transfer_fields_rejects_blank_remote_root(tmp_path: Path):
+    key_path = tmp_path / "id_ed25519"
+    key_path.write_text("not a real key, just needs to exist")
+    config = WorkerConfig.from_env(
+        env={"SPOTTERON_BASE_URL": "https://example-spotteron.test", "COASTSNAP_STAGING_DIR": str(tmp_path)},
+        gadi_sftp_host="gadi.example.test",
+        gadi_sftp_username="ausc-ingest",
+        gadi_sftp_private_key_path=key_path,
+        remote_root="   ",
+    )
+    with pytest.raises(ConfigError, match="remote_root"):
+        config.require_transfer_fields(allow_production_remote_root=True)
+
+
+def test_source_timezone_defaults_to_utc(tmp_path: Path):
+    config = WorkerConfig.from_env(
+        env={"SPOTTERON_BASE_URL": "https://example-spotteron.test", "COASTSNAP_STAGING_DIR": str(tmp_path)}
+    )
+    assert config.spotteron_source_timezone == "UTC"
+
+
+def test_source_timezone_accepts_valid_iana_name(tmp_path: Path):
+    config = WorkerConfig.from_env(
+        env={
+            "SPOTTERON_BASE_URL": "https://example-spotteron.test",
+            "COASTSNAP_STAGING_DIR": str(tmp_path),
+            "SPOTTERON_SOURCE_TIMEZONE": "Australia/Brisbane",
+        }
+    )
+    assert config.spotteron_source_timezone == "Australia/Brisbane"
+
+
+def test_source_timezone_rejects_invalid_name(tmp_path: Path):
+    with pytest.raises(ConfigError, match="not a valid IANA timezone"):
+        WorkerConfig.from_env(
+            env={
+                "SPOTTERON_BASE_URL": "https://example-spotteron.test",
+                "COASTSNAP_STAGING_DIR": str(tmp_path),
+                "SPOTTERON_SOURCE_TIMEZONE": "Not/A_Real_Zone",
+            }
+        )

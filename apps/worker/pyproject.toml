@@ -7,6 +7,12 @@ dependencies = [
     "pydantic>=2,<3",
     "requests>=2.31,<3",
     "paramiko>=3.4,<4",
+    # Provides the IANA tz database for the stdlib zoneinfo module used
+    # by SPOTTERON_SOURCE_TIMEZONE handling. Ubuntu/Nectar normally has
+    # a system tz database already, but this Windows dev environment
+    # (and some minimal container images) do not — installing it
+    # unconditionally makes zoneinfo.ZoneInfo("UTC") work everywhere.
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]

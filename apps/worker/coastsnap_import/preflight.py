@@ -152,3 +152,25 @@ def check_bearer_token_configured(bearer_token: Optional[str]) -> PreflightCheck
     if bearer_token:
         return PreflightCheck("Spotteron bearer token", True, "configured (value not shown)")
     return PreflightCheck("Spotteron bearer token", True, "not set (optional; public GET will be used)")
+
+
+def check_gadi_configuration_status(gadi_sftp_host: Optional[str], gadi_sftp_username: Optional[str]) -> PreflightCheck:
+    """Informational only — always passes. --process-local and
+    --plan-only never construct an SFTP client regardless of whether
+    Gadi configuration happens to be present (see cli.py's run()), so
+    this never blocks a process-local smoke test. It exists so an
+    operator can see at a glance whether Gadi config is present before
+    a --transfer run, without this preflight itself ever contacting
+    Gadi (it never opens a connection to check)."""
+    if gadi_sftp_host or gadi_sftp_username:
+        return PreflightCheck(
+            "Gadi SFTP configuration",
+            True,
+            "present (GADI_SFTP_HOST/GADI_SFTP_USERNAME set) — irrelevant to --plan-only/--process-local, "
+            "only used if --transfer is explicitly requested",
+        )
+    return PreflightCheck(
+        "Gadi SFTP configuration",
+        True,
+        "absent — expected for a --plan-only/--process-local-only environment",
+    )

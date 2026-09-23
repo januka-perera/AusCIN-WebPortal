@@ -20,9 +20,22 @@ DEFAULT_SPOTTERON_API_VERSION = "v2.4"
 DEFAULT_SPOTTERON_TOPIC_ID = 37
 DEFAULT_SPOTTERON_PAGE_LIMIT = 50
 DEFAULT_SPOTTERON_IMAGE_BASE_URL = "https://files.spotteron.com/images/spots"
+DEFAULT_SPOTTERON_SOURCE_TIMEZONE = "UTC"
+"""Explicit, documented default for interpreting timezone-less
+``spotted_at`` values (the confirmed real Spotteron shape). This is an
+assumption, not a confirmed fact — see spotteron_client.py's
+"Timestamp interpretation policy". Override with
+SPOTTERON_SOURCE_TIMEZONE once the real convention is confirmed."""
 DEFAULT_REMOTE_ROOT = "/g/data/qu34/AusCIN/coastsnap-test"
 DEFAULT_MAX_IMAGES = 5
 DEFAULT_GADI_CHECKSUM_STRATEGY = "ssh-exec"
+PRODUCTION_REMOTE_ROOT_PREFIX = "/g/data/qu34"
+"""The real NCI project storage mount (see AGENTS.md: "Never access
+/g/data/qu34 during local development" / "Do not access production
+/g/data/qu34"). Any remote_root under this prefix — including this
+project's own DEFAULT_REMOTE_ROOT, which is a test subdirectory of it —
+is treated as production and refused by require_transfer_fields()
+unless explicitly confirmed."""
 
 MetadataBackendName = Literal["exiftool", "argus"]
 GadiChecksumStrategy = Literal["ssh-exec", "read-back"]
@@ -46,6 +59,7 @@ class WorkerConfig(BaseModel):
     spotteron_bearer_token: Optional[str] = None
     spotteron_page_limit: int = DEFAULT_SPOTTERON_PAGE_LIMIT
     spotteron_image_base_url: str = DEFAULT_SPOTTERON_IMAGE_BASE_URL
+    spotteron_source_timezone: str = DEFAULT_SPOTTERON_SOURCE_TIMEZONE
 
     # Local processing
     staging_dir: Path
@@ -81,14 +95,32 @@ class WorkerConfig(BaseModel):
             raise ValueError("must be a positive integer")
         return value
 
-    def require_transfer_fields(self) -> None:
-        """Called only when an actual SFTP transfer is about to be attempted (not for --dry-run)."""
+    @field_validator("spotteron_source_timezone")
+    @classmethod
+    def _must_be_valid_iana_timezone(cls, value: str) -> str:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"spotteron_source_timezone {value!r} is not a valid IANA timezone name: {exc}") from exc
+        return value
+
+    def require_transfer_fields(self, *, allow_production_remote_root: bool = False) -> None:
+        """Called only when an actual SFTP transfer is about to be
+        attempted (not for --plan-only/--process-local). Requires the
+        full set of Gadi SFTP fields, a non-blank remote_root, and — by
+        default — refuses a remote_root under the production NCI
+        project storage (see PRODUCTION_REMOTE_ROOT_PREFIX) unless
+        ``allow_production_remote_root`` is explicitly set (wired from
+        --confirm-production-remote-root in cli.py)."""
         missing = [
             name
             for name, value in (
                 ("gadi_sftp_host", self.gadi_sftp_host),
                 ("gadi_sftp_username", self.gadi_sftp_username),
                 ("gadi_sftp_private_key_path", self.gadi_sftp_private_key_path),
+                ("remote_root", self.remote_root.strip() if self.remote_root else self.remote_root),
             )
             if not value
         ]
@@ -100,6 +132,13 @@ class WorkerConfig(BaseModel):
             raise ConfigError(
                 f"gadi_sftp_private_key_path does not exist: {self.gadi_sftp_private_key_path}"
             )
+        if self.remote_root.startswith(PRODUCTION_REMOTE_ROOT_PREFIX) and not allow_production_remote_root:
+            raise ConfigError(
+                f"remote_root {self.remote_root!r} is under the production NCI project storage "
+                f"({PRODUCTION_REMOTE_ROOT_PREFIX!r}). Refusing to transfer to it without an explicit "
+                "override — pass --confirm-production-remote-root if this is genuinely intended, or "
+                "set GADI_REMOTE_ROOT to a non-production test destination."
+            )
 
     def __repr__(self) -> str:  # never leak the bearer token or key path contents
         return (
@@ -108,6 +147,7 @@ class WorkerConfig(BaseModel):
             f"spotteron_topic_id={self.spotteron_topic_id!r}, "
             f"spotteron_bearer_token={_redact(self.spotteron_bearer_token)!r}, "
             f"spotteron_image_base_url={self.spotteron_image_base_url!r}, "
+            f"spotteron_source_timezone={self.spotteron_source_timezone!r}, "
             f"staging_dir={str(self.staging_dir)!r}, "
             f"metadata_backend={self.metadata_backend!r}, "
             f"gadi_sftp_host={self.gadi_sftp_host!r}, "
@@ -147,6 +187,7 @@ class WorkerConfig(BaseModel):
             spotteron_bearer_token=source.get("SPOTTERON_BEARER_TOKEN") or None,
             spotteron_page_limit=_int_or("SPOTTERON_PAGE_LIMIT", DEFAULT_SPOTTERON_PAGE_LIMIT),
             spotteron_image_base_url=source.get("SPOTTERON_IMAGE_BASE_URL") or DEFAULT_SPOTTERON_IMAGE_BASE_URL,
+            spotteron_source_timezone=source.get("SPOTTERON_SOURCE_TIMEZONE") or DEFAULT_SPOTTERON_SOURCE_TIMEZONE,
             staging_dir=Path(staging_dir),
             metadata_backend=source.get("COASTSNAP_METADATA_BACKEND", "exiftool") or "exiftool",
             exiftool_path=source.get("EXIFTOOL_PATH", "exiftool") or "exiftool",

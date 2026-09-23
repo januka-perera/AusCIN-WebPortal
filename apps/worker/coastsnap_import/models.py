@@ -75,8 +75,10 @@ class SourceObservation(BaseModel):
 
     observation_id: str
     root_id: str
+    spotted_at_raw: Optional[str] = None
+    """The raw, unparsed spotted_at string exactly as received from Spotteron (e.g. "2026-09-23 14:57:28") — no timezone applied. Preserved so the original source value stays auditable regardless of which SPOTTERON_SOURCE_TIMEZONE was assumed. See spotteron_client.py's "Timestamp interpretation policy"."""
     spotted_at_utc: Optional[datetime] = None
-    """Parsed from the raw record's ``spotted_at`` field. None if absent/unparseable — such records are excluded from date filtering rather than guessed at."""
+    """Parsed from spotted_at_raw and normalised to UTC using the configured source timezone. None if absent/unparseable — such records are excluded from date filtering rather than guessed at."""
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     """Preserved on the observation itself (not just embedded into Level 1's metadata) since there is no separate, confirmed Spotteron "site" resource this could otherwise live on — see spotteron_client.py's module docstring."""
@@ -189,6 +191,17 @@ LEVEL0_DIR = "level-0"
 LEVEL1_DIR = "level-1"
 METADATA_SOURCE_RECORDS_DIR = "metadata/source-records"
 MANIFESTS_DIR = "manifests"
+
+
+def build_site_directory_id(root_id: str) -> str:
+    """The deterministic on-disk/remote directory identity for a site,
+    e.g. ``"root-487447"``. Always root_id-based, never a human-readable
+    site name: there is no confirmed, stable Spotteron field for one
+    (dynamic per-deployment fields like ``fld_01_00001214`` are NOT a
+    stable schema and are never read — see spotteron_client.py). This
+    makes the identity deterministic and valid even when a site name is
+    (always, currently) unavailable."""
+    return f"root-{root_id}"
 
 
 def build_level_relative_path(
