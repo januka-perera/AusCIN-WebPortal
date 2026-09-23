@@ -1,0 +1,29 @@
+{
+  "_synthetic_fixture_note": "Hand-written test fixture modelling this client's ASSUMED Spotteron v2.4 JSON:API-style response shape. Not a captured real response — the real shape is unconfirmed (see spotteron_client.py's module docstring).",
+  "data": [
+    {
+      "id": "1001",
+      "type": "spot",
+      "attributes": {
+        "spotted_at": "2026-08-01T02:15:00Z",
+        "image_url": "https://cdn.example-spotteron.test/images/1001.jpg",
+        "latitude": -33.45,
+        "longitude": 151.4,
+        "contributor_name": "Test Contributor A",
+        "attribution_permitted": true
+      }
+    },
+    {
+      "id": "1002",
+      "type": "spot",
+      "attributes": {
+        "spotted_at": "2026-08-05T03:05:00Z",
+        "image_url": "https://cdn.example-spotteron.test/images/1002.jpg",
+        "latitude": -33.45,
+        "longitude": 151.4,
+        "contributor_name": "Test Contributor B",
+        "attribution_permitted": false
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "_synthetic_fixture_note": "Synthetic spot with no candidate image field populated, for testing ImageUrlResolutionError.",
+  "data": [
+    {
+      "id": "2001",
+      "type": "spot",
+      "attributes": {
+        "spotted_at": "2026-08-01T02:15:00Z",
+        "latitude": -33.45,
+        "longitude": 151.4
+      }
+    }
+  ]
+}

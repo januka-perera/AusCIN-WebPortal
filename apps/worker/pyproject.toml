@@ -1,0 +1,29 @@
+[project]
+name = "coastsnap-import"
+version = "0.1.0"
+description = "Single-site CoastSnap ingestion proof of concept: Spotteron -> Level 0/Level 1 -> Gadi (SFTP)."
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2,<3",
+    "requests>=2.31,<3",
+    "paramiko>=3.4,<4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+    "responses>=0.25,<1",
+]
+
+[project.scripts]
+coastsnap-import = "coastsnap_import.cli:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["coastsnap_import*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

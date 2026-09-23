@@ -38,6 +38,8 @@ pnpm-debug.log*
 *.pyc
 **/.venv/
 **/venv/
+**/*.egg-info/
+**/.pytest_cache/
 
 # Local sample data: keep metadata/config, never commit raw or generated media
 data/**/*.jpg
@@ -54,3 +56,17 @@ data/**/*.sqlite
 # Temporary processing files
 *.tmp
 .cache/
+
+# CoastSnap importer (apps/worker): never commit locally staged
+# originals/derivatives, in-flight transfer files or generated
+# manifests/source-record dumps, wherever the operator points the
+# staging directory (COASTSNAP_STAGING_DIR is required and should
+# always point outside the repo, but this is defense in depth).
+apps/worker/**/*.part
+apps/worker/**/*.jpg
+apps/worker/**/*.jpeg
+apps/worker/**/*.png
+apps/worker/**/*.heic
+apps/worker/.staging/
+apps/worker/staging/
+!apps/worker/fixtures/**

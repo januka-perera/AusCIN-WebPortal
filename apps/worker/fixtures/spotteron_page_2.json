@@ -1,0 +1,17 @@
+{
+  "_synthetic_fixture_note": "Synthetic second page, deliberately shorter than a typical page limit so pagination tests can exercise the 'last page' termination path.",
+  "data": [
+    {
+      "id": "1003",
+      "type": "spot",
+      "attributes": {
+        "spotted_at": "2026-09-10T04:20:00Z",
+        "image_url": "https://cdn.example-spotteron.test/images/1003.jpg",
+        "latitude": -33.46,
+        "longitude": 151.41,
+        "contributor_name": "Test Contributor C",
+        "attribution_permitted": true
+      }
+    }
+  ]
+}

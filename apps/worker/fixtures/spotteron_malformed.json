@@ -1,0 +1,5 @@
+{
+  "_synthetic_fixture_note": "Deliberately malformed: neither a bare list nor an object with a list 'data' key, to exercise SpotteronResponseError.",
+  "error": "topic_id not found",
+  "code": 404
+}
