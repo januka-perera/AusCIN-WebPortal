@@ -35,6 +35,38 @@ are not required:
 
     python -m coastsnap_import.cli --preflight [--staging-dir ./staging]
 
+Local rerun status categories (printed per-observation and summarised
+at the end of a --process-local/--transfer run):
+
+    processed                 Level 0 was (re)downloaded and/or Level 1
+                               was (re)created/(re)embedded this run —
+                               real local work happened.
+    reused_local               BOTH Level 0 and Level 1 already existed
+                               on disk with a checksum matching the
+                               manifest — nothing was downloaded or
+                               re-embedded. See _reusable_local_product.
+    skipped_remote_verified    The manifest already recorded BOTH
+                               transfers as VERIFIED/SKIPPED_EXISTING —
+                               reserved for remote-transfer verification
+                               only, never used for local-only reuse
+                               (that's reused_local). Only reachable
+                               after a prior --transfer run.
+    failed                     The observation raised an error and was
+                               not added/updated in the manifest.
+
+This design is deliberate, not an oversight: --process-local reruns
+are NOT short-circuited by skipped_remote_verified (transfers are
+never attempted in that mode, so they can never become VERIFIED) —
+every observation is revisited, its raw source record is rewritten
+(cheap and idempotent) and its image URL is re-validated with one HTTP
+HEAD request (to catch a since-changed/expired reference), but Level 0
+bytes are never re-downloaded and Level 1 is never re-embedded when
+the existing local file's checksum still matches the manifest — that
+is what reused_local reports. In other words: a --process-local rerun
+does real network/file work every time (record + one HEAD request per
+observation) but not the *expensive* work (image download, metadata
+embedding) unless something is actually missing or corrupted.
+
 See the module docstrings of spotteron_client.py and image_resolver.py
 for what is confirmed vs. unconfirmed about the real Spotteron v2.4
 schema. This module makes no live network calls when imported (only
@@ -50,7 +82,7 @@ import sys
 from datetime import datetime, time, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from . import __version__
 from .config import ConfigError, WorkerConfig
@@ -309,7 +341,8 @@ def run(
         publisher = SftpPublisher(transport, remote_root=config.remote_root)
 
     processed = 0
-    skipped_already_done = 0
+    reused_local = 0
+    skipped_remote_verified = 0
     failed = 0
 
     try:
@@ -330,12 +363,16 @@ def run(
 
             existing_entry = manifest_store.find_entry(manifest, observation.observation_id)
             if existing_entry is not None and manifest_store.is_fully_transferred(existing_entry):
-                print(f"[skip] {observation.observation_id} already ingested and verified.")
-                skipped_already_done += 1
+                # Reserved for REMOTE transfer verification only — never
+                # used for "the local files were already fine" (that's
+                # reused_local below). Only ever reachable when a prior
+                # --transfer run fully verified both files.
+                print(f"[skip] {observation.observation_id} already fully transferred and verified (remote).")
+                skipped_remote_verified += 1
                 continue
 
             try:
-                entry = _ingest_one(
+                outcome = _ingest_one(
                     raw_spot=raw_spot,
                     site=site,
                     site_raw_record=site_raw_record,
@@ -355,9 +392,14 @@ def run(
                 failed += 1
                 continue
 
-            manifest = manifest_store.upsert_entry(manifest, entry)
+            manifest = manifest_store.upsert_entry(manifest, outcome.entry)
             manifest_store.save(manifest, manifest_path)  # save after every observation: never lose progress
-            processed += 1
+            if outcome.fully_reused_locally:
+                print(f"[reused-local] {observation.observation_id} local Level 0/1 already valid; nothing downloaded or re-embedded.")
+                reused_local += 1
+            else:
+                print(f"[processed] {observation.observation_id} downloaded and/or re-embedded this run.")
+                processed += 1
     except SpotteronClientError as exc:
         print(f"[fatal] Spotteron request failed: {exc}", file=sys.stderr)
         return 1
@@ -366,8 +408,8 @@ def run(
             transport.close()
 
     print(
-        f"Run complete: processed={processed} skipped_already_done={skipped_already_done} "
-        f"failed={failed} manifest={manifest_path}"
+        f"Run complete: processed={processed} reused_local={reused_local} "
+        f"skipped_remote_verified={skipped_remote_verified} failed={failed} manifest={manifest_path}"
     )
     return 1 if failed else 0
 
@@ -390,6 +432,20 @@ def _reusable_transfer(transfer: Optional[TransferResult]) -> Optional[TransferR
     return None
 
 
+class IngestOutcome(NamedTuple):
+    """What actually happened while ingesting one observation — used by
+    run() to report processed/reused_local separately (see the module
+    docstring section "Local rerun status categories"), rather than
+    conflating "did real work" with "found everything already valid"."""
+
+    entry: ManifestEntry
+    fully_reused_locally: bool
+    """True only when BOTH Level 0 and Level 1 already existed on disk
+    with a checksum matching the manifest — i.e. this call downloaded
+    nothing and re-embedded nothing. False if either was (re)downloaded
+    or (re)embedded this run, even if the other was reused."""
+
+
 def _ingest_one(
     *,
     raw_spot: dict,
@@ -405,7 +461,7 @@ def _ingest_one(
     attempt_transfer: bool,
     publisher: Optional[SftpPublisher],
     existing_entry: Optional[ManifestEntry],
-) -> ManifestEntry:
+) -> IngestOutcome:
     """Processes one observation, reusing any already-verified local
     files/transfers from ``existing_entry`` instead of redoing them —
     this is what makes a rerun idempotent rather than merely safe."""
@@ -416,8 +472,16 @@ def _ingest_one(
     _write_json(staging_dir / record_ref.site_record_relative_path, site_raw_record)
     _write_json(staging_dir / record_ref.observation_record_relative_path, raw_spot)
 
-    image_url = image_resolver.resolve(raw_spot, observation.observation_id)
-    observation = observation.model_copy(update={"image_url": image_url})
+    resolution = image_resolver.resolve(raw_spot, observation.observation_id)
+    image_url = resolution.url
+    # resolution.image_reference is the authoritative value once resolution has
+    # actually happened (guaranteed consistent with image_url's origin, not just
+    # independently re-derived) — it only falls back to the parse-time guess in
+    # the (currently only theoretical) case where a direct full URL was used and
+    # the API separately supplied some other reference field.
+    observation = observation.model_copy(
+        update={"image_url": image_url, "media_reference": resolution.image_reference or observation.media_reference}
+    )
 
     level0_id = f"{observation.observation_id}-L0"
     filename = f"{observation.observation_id}{_infer_suffix(image_url)}"
@@ -427,7 +491,8 @@ def _ingest_one(
 
     # --- Level 0: reuse the existing download if it's still intact. ---
     level0 = existing_entry.level0 if existing_entry else None
-    if not _reusable_local_product(staging_dir, level0):
+    level0_reused = _reusable_local_product(staging_dir, level0)
+    if not level0_reused:
         level0 = processor.download_level0(
             product_id=level0_id,
             observation_id=observation.observation_id,
@@ -438,7 +503,8 @@ def _ingest_one(
     # --- Level 1: reuse the existing copy+embed if it's still intact. ---
     level1 = existing_entry.level1 if existing_entry else None
     level1_local_path = staging_dir / level1_remote_relative
-    if not _reusable_local_product(staging_dir, level1):
+    level1_reused = _reusable_local_product(staging_dir, level1)
+    if not level1_reused:
         level1_local_path = processor.copy_level0_to_level1_path(level0, level1_remote_relative)
         fields = MetadataFields(
             source_platform="spotteron",
@@ -487,7 +553,7 @@ def _ingest_one(
     elif level0_transfer is None or level1_transfer is None:
         print(f"[process-local] would transfer {level0.remote_relative_path} and {level1.remote_relative_path} in --transfer mode")
 
-    return ManifestEntry(
+    entry = ManifestEntry(
         site=site,
         observation=observation,
         source_record_ref=record_ref,
@@ -497,6 +563,7 @@ def _ingest_one(
         level1_transfer=level1_transfer,
         ingested_at_utc=datetime.now(timezone.utc),
     )
+    return IngestOutcome(entry=entry, fully_reused_locally=(level0_reused and level1_reused))
 
 
 def _infer_suffix(url: str) -> str:

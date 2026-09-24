@@ -42,9 +42,23 @@ def test_successful_image_reference_resolution():
     responses.add(responses.HEAD, REAL_SHAPE_EXPECTED_URL, status=200, content_type="image/jpeg")
 
     resolver = ImageUrlResolver(image_base_url=IMAGE_BASE_URL)
-    resolved = resolver.resolve(_real_shape_spot(0), observation_id="2001")
+    resolution = resolver.resolve(_real_shape_spot(0), observation_id="2001")
 
-    assert resolved == REAL_SHAPE_EXPECTED_URL
+    assert resolution.url == REAL_SHAPE_EXPECTED_URL
+
+
+@responses.activate
+def test_resolve_returns_the_original_image_reference_alongside_url():
+    # The exact opaque attributes.image value must never be discarded
+    # once resolution succeeds — a caller needs it to preserve
+    # media_reference without re-deriving it independently.
+    responses.add(responses.HEAD, REAL_SHAPE_EXPECTED_URL, status=200, content_type="image/jpeg")
+
+    resolver = ImageUrlResolver(image_base_url=IMAGE_BASE_URL)
+    resolution = resolver.resolve(_real_shape_spot(0), observation_id="2001")
+
+    assert resolution.image_reference == REAL_SHAPE_REFERENCE
+    assert resolution.url == f"{IMAGE_BASE_URL}/{resolution.image_reference}.jpg"
 
 
 @responses.activate
@@ -54,9 +68,23 @@ def test_direct_full_url_resolution_bypasses_image_base_url():
     responses.add(responses.HEAD, direct_url, status=200, content_type="image/jpeg")
 
     resolver = ImageUrlResolver(image_base_url=IMAGE_BASE_URL)
-    resolved = resolver.resolve(spot, observation_id="1001")
+    resolution = resolver.resolve(spot, observation_id="1001")
 
-    assert resolved == direct_url
+    assert resolution.url == direct_url
+
+
+@responses.activate
+def test_direct_full_url_resolution_has_no_image_reference():
+    # A direct URL means the API provided no separate opaque reference
+    # to preserve — image_reference is None here by design, not by bug.
+    spot = _spot(0)
+    direct_url = spot["attributes"]["image_url"]
+    responses.add(responses.HEAD, direct_url, status=200, content_type="image/jpeg")
+
+    resolver = ImageUrlResolver(image_base_url=IMAGE_BASE_URL)
+    resolution = resolver.resolve(spot, observation_id="1001")
+
+    assert resolution.image_reference is None
 
 
 @responses.activate
@@ -112,9 +140,9 @@ def test_falls_back_to_get_when_head_is_not_supported():
     responses.add(responses.GET, REAL_SHAPE_EXPECTED_URL, status=200, content_type="image/jpeg", body=b"jpeg-bytes")
 
     resolver = ImageUrlResolver(image_base_url=IMAGE_BASE_URL)
-    resolved = resolver.resolve(_real_shape_spot(0), observation_id="2001")
+    resolution = resolver.resolve(_real_shape_spot(0), observation_id="2001")
 
-    assert resolved == REAL_SHAPE_EXPECTED_URL
+    assert resolution.url == REAL_SHAPE_EXPECTED_URL
 
 
 @responses.activate
@@ -154,12 +182,25 @@ def test_resolves_contributor_display_name():
     assert resolve_contributor_display_name(_spot(0)) == "Test Contributor A"
 
 
+def test_resolves_media_reference_from_confirmed_attributes_image_field():
+    # attributes.image is the confirmed real field — the exact opaque
+    # reference must be retained exactly, not just a lower-priority fallback.
+    assert resolve_media_reference(_real_shape_spot(0)) == REAL_SHAPE_REFERENCE
+
+
+def test_resolves_media_reference_prefers_attributes_image_over_other_candidates():
+    spot = {"attributes": {"image": "the-real-reference", "image_id": "should-not-be-used"}}
+    assert resolve_media_reference(spot) == "the-real-reference"
+
+
 def test_resolves_media_reference_when_present():
     spot = {"attributes": {"image_id": "img-123"}}
     assert resolve_media_reference(spot) == "img-123"
 
 
 def test_media_reference_absent_returns_none():
+    # Only None when the API record truly has no candidate field at all —
+    # never guessed, never left over from a stale/mismatched lookup.
     assert resolve_media_reference({"attributes": {}}) is None
 
 

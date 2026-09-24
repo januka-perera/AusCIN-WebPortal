@@ -14,6 +14,7 @@ import responses
 
 from coastsnap_import import cli
 from coastsnap_import.models import TransferState
+from coastsnap_import.processor import compute_sha256
 from tests.conftest import FakeSshSftpTransport, load_fixture
 
 BASE_URL = "https://example-spotteron.test"
@@ -261,7 +262,9 @@ def test_transfer_verifies_and_renames(base_env: Path, monkeypatch: pytest.Monke
 
 
 @responses.activate
-def test_idempotent_rerun_skips_without_reuploading(base_env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+def test_idempotent_rerun_skips_without_reuploading(
+    base_env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture
+):
     _mock_spots_page()
     _mock_image_downloads()
     key_path = tmp_path / "id_ed25519"
@@ -281,6 +284,7 @@ def test_idempotent_rerun_skips_without_reuploading(base_env: Path, monkeypatch:
     first_exit = cli.main(args)
     assert first_exit == 0
     assert len(first_transport.uploaded) == 2  # level0 + level1 .part uploads
+    capsys.readouterr()  # discard first run's output before checking the second run's
 
     # Simulate a fresh process/connection on the rerun — a *new*, empty
     # fake transport — the manifest alone must be what prevents redoing
@@ -291,10 +295,78 @@ def test_idempotent_rerun_skips_without_reuploading(base_env: Path, monkeypatch:
 
     assert second_exit == 0
     assert second_transport.uploaded == []  # nothing re-uploaded
+    # A remote-transfer-verified rerun is skipped_remote_verified, NOT
+    # reused_local — that status is reserved for local-only reuse.
+    summary = capsys.readouterr().out
+    assert "skipped_remote_verified=1" in summary
+    assert "processed=0" in summary
+    assert "reused_local=0" in summary
+
+
+def _image_get_calls(url: str) -> list:
+    return [c for c in responses.calls if c.request.method == "GET" and c.request.url.startswith(url)]
 
 
 @responses.activate
-def test_corrupted_local_level0_file_triggers_redownload_on_rerun(base_env: Path):
+def test_first_local_run_reports_processed_not_reused(base_env: Path, capsys: pytest.CaptureFixture):
+    _mock_spots_page()
+    _mock_image_downloads()
+    args = [
+        "--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31",
+        "--process-local", "--max-images", "1",
+    ]
+
+    assert cli.main(args) == 0
+
+    summary = capsys.readouterr().out
+    assert "processed=1" in summary
+    assert "reused_local=0" in summary
+    assert "skipped_remote_verified=0" in summary
+    assert "failed=0" in summary
+
+
+@responses.activate
+def test_identical_second_local_run_reuses_both_levels_without_redownloading(
+    base_env: Path, capsys: pytest.CaptureFixture
+):
+    """An unverified local-only entry (transfers are null under
+    --process-local) must still be reused on rerun — it is never
+    "skipped_remote_verified" (that's reserved for a verified transfer),
+    but it also must not be blindly redownloaded/re-embedded."""
+    _mock_spots_page()
+    _mock_image_downloads()
+    args = [
+        "--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31",
+        "--process-local", "--max-images", "1",
+    ]
+
+    assert cli.main(args) == 0
+    level0_file = base_env / "level-0" / "root-37" / "2026" / "08" / "01" / "images" / "1001.jpg"
+    level1_file = base_env / "level-1" / "root-37" / "2026" / "08" / "01" / "images" / "1001.jpg"
+    level0_checksum_before = compute_sha256(level0_file).sha256
+    level1_checksum_before = compute_sha256(level1_file).sha256
+    capsys.readouterr()
+
+    assert cli.main(args) == 0  # identical second run, same staging dir, same manifest
+
+    summary = capsys.readouterr().out
+    assert "processed=0" in summary
+    assert "reused_local=1" in summary
+    assert "skipped_remote_verified=0" in summary
+    # Neither file's content changed...
+    assert compute_sha256(level0_file).sha256 == level0_checksum_before
+    assert compute_sha256(level1_file).sha256 == level1_checksum_before
+    # ...and the image body was only ever downloaded once, on the first run
+    # (a HEAD re-validation per run is expected and documented; a second
+    # GET of the image body would mean it was redownloaded unnecessarily).
+    assert len(_image_get_calls(IMAGE_URL_1001)) == 1
+
+    manifest = json.loads((base_env / "manifests" / "37.json").read_text())
+    assert len(manifest["entries"]) == 1  # still recorded, not duplicated
+
+
+@responses.activate
+def test_corrupted_both_levels_triggers_full_redownload_on_rerun(base_env: Path, capsys: pytest.CaptureFixture):
     _mock_spots_page()
     _mock_image_downloads()
     args = [
@@ -310,11 +382,93 @@ def test_corrupted_local_level0_file_triggers_redownload_on_rerun(base_env: Path
     # Simulate on-disk corruption: the recorded checksum no longer matches.
     level0_file.write_bytes(b"corrupted-on-disk-content")
     level1_file.write_bytes(b"corrupted-on-disk-content")
+    capsys.readouterr()
 
     assert cli.main(args) == 0  # a clear redownload, not a crash or a silently-reused bad file
 
     assert level0_file.read_bytes() == SAMPLE_IMAGE_BYTES
     assert level1_file.read_bytes() == SAMPLE_IMAGE_BYTES  # re-copied from the fresh Level 0 and re-embedded
+    summary = capsys.readouterr().out
+    assert "processed=1" in summary
+    assert "reused_local=0" in summary  # corruption means this was NOT a pure reuse
+
+
+@responses.activate
+def test_corrupted_level0_only_redownloads_level0_but_leaves_valid_level1_untouched(
+    base_env: Path, capsys: pytest.CaptureFixture
+):
+    _mock_spots_page()
+    _mock_image_downloads()
+    args = [
+        "--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31",
+        "--process-local", "--max-images", "1",
+    ]
+
+    assert cli.main(args) == 0
+    level0_file = base_env / "level-0" / "root-37" / "2026" / "08" / "01" / "images" / "1001.jpg"
+    level1_file = base_env / "level-1" / "root-37" / "2026" / "08" / "01" / "images" / "1001.jpg"
+    level1_checksum_before = compute_sha256(level1_file).sha256
+
+    level0_file.write_bytes(b"corrupted-level0-only")
+    capsys.readouterr()
+
+    assert cli.main(args) == 0
+
+    assert level0_file.read_bytes() == SAMPLE_IMAGE_BYTES  # redownloaded, corruption fixed
+    assert compute_sha256(level1_file).sha256 == level1_checksum_before  # left completely alone
+    summary = capsys.readouterr().out
+    assert "processed=1" in summary
+    assert "reused_local=0" in summary  # level0 needed work, so this run is not a pure reuse
+
+
+@responses.activate
+def test_corrupted_level1_only_recreates_level1_without_redownloading_level0(
+    base_env: Path, capsys: pytest.CaptureFixture
+):
+    _mock_spots_page()
+    _mock_image_downloads()
+    args = [
+        "--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31",
+        "--process-local", "--max-images", "1",
+    ]
+
+    assert cli.main(args) == 0
+    level0_file = base_env / "level-0" / "root-37" / "2026" / "08" / "01" / "images" / "1001.jpg"
+    level1_file = base_env / "level-1" / "root-37" / "2026" / "08" / "01" / "images" / "1001.jpg"
+
+    level1_file.write_bytes(b"corrupted-level1-only")
+    capsys.readouterr()
+
+    assert cli.main(args) == 0
+
+    assert level0_file.read_bytes() == SAMPLE_IMAGE_BYTES  # untouched, never redownloaded
+    assert level1_file.read_bytes() == SAMPLE_IMAGE_BYTES  # recreated from Level 0 and re-embedded
+    # The image body must only have been fetched once, on the first run —
+    # the corrupted Level 1 must not have forced a redundant Level 0 download.
+    assert len(_image_get_calls(IMAGE_URL_1001)) == 1
+    summary = capsys.readouterr().out
+    assert "processed=1" in summary
+    assert "reused_local=0" in summary
+
+
+@responses.activate
+def test_missing_manifest_path_is_created_fresh(base_env: Path, tmp_path: Path):
+    _mock_spots_page()
+    _mock_image_downloads()
+    custom_manifest = tmp_path / "does" / "not" / "exist-yet" / "manifest.json"
+    assert not custom_manifest.exists()
+
+    exit_code = cli.main(
+        [
+            "--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31",
+            "--process-local", "--max-images", "1", "--manifest", str(custom_manifest),
+        ]
+    )
+
+    assert exit_code == 0
+    assert custom_manifest.exists()
+    manifest = json.loads(custom_manifest.read_text())
+    assert len(manifest["entries"]) == 1
 
 
 @responses.activate
@@ -378,6 +532,11 @@ def test_process_local_handles_real_live_response_shape(base_env: Path):
     # derived from any dynamic field.
     assert entry["site"]["name"] is None
     assert entry["site"]["root_id"] == "487447"
+    # media_reference must be the exact opaque attributes.image value —
+    # not discarded once the image URL is resolved from it.
+    assert entry["observation"]["media_reference"] == "000037/2026/09/23/gkckxusp53of89ksukepgv6x6rwx7o7v"
+    assert entry["observation"]["image_url"] == live_image_url
+    assert entry["observation"]["media_reference"] in entry["observation"]["image_url"]
     # Parsed correctly from the real "YYYY-MM-DD HH:MM:SS" (no "T", no
     # timezone) format into the expected date-partitioned path.
     level0_file = base_env / "level-0" / "root-487447" / "2026" / "09" / "23" / "images" / "1351374.jpg"

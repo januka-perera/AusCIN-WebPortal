@@ -312,14 +312,26 @@ cat "$HOME/auscin-staging/metadata/source-records/observations/<id>.json"
 
 ### Identifying failed records
 
-`cli.py` prints one line per failed observation to stderr while
-running, and a summary line at the end:
+`cli.py` prints one line per observation while running (`[processed]`,
+`[reused-local]`, `[skip]`, or `[error]` on stderr), and a summary line
+at the end:
 
 ```
 [error] <observation_id>: <reason>
 ...
-Run complete: processed=<n> skipped_already_done=<n> failed=<n> manifest=<path>
+Run complete: processed=<n> reused_local=<n> skipped_remote_verified=<n> failed=<n> manifest=<path>
 ```
+
+- `processed` — Level 0 was (re)downloaded and/or Level 1 was
+  (re)created this run: real local work happened.
+- `reused_local` — both Level 0 and Level 1 already existed on disk
+  with a checksum matching the manifest; nothing was downloaded or
+  re-embedded.
+- `skipped_remote_verified` — the manifest already recorded both
+  transfers as verified; only ever non-zero after a prior `--transfer`
+  run. Never used for local-only reuse — that's `reused_local`.
+- `failed` — the observation raised an error and was not added/updated
+  in the manifest.
 
 A non-zero `failed` count (and a non-zero process exit code) means at
 least one observation didn't make it into the manifest at all — check
@@ -332,16 +344,26 @@ failure.
 
 ### Rerunning safely
 
-Rerunning the exact same command is always safe and idempotent:
+Rerunning the exact same command is always safe and idempotent. A
+`--process-local` rerun still does some real work every time (it
+rewrites the raw source-record JSON, which is cheap, and re-validates
+the image URL with one HTTP HEAD request per observation, to catch a
+since-changed reference) — but the expensive work is skipped when
+unnecessary:
 
 - A local Level 0/Level 1 file whose on-disk SHA-256 still matches the
   manifest's recorded checksum is reused, not re-downloaded or
-  re-embedded.
+  re-embedded — reported as `reused_local`, independently for each of
+  Level 0 and Level 1 (corrupting only one does not force the other to
+  be redone).
 - A local file that's missing or whose checksum no longer matches
   (e.g. it was corrupted or deleted) is transparently redownloaded/
-  reprocessed — this is a clean redo, never a silent skip of bad data.
+  reprocessed — this is a clean redo, never a silent skip of bad data —
+  and the observation is reported as `processed`, not `reused_local`.
 - An observation whose transfer already reported `verified` in the
-  manifest is never re-uploaded on a later `--transfer` rerun.
+  manifest is never re-uploaded on a later `--transfer` rerun —
+  reported as `skipped_remote_verified`, and the observation is not
+  even revisited locally in that case.
 
 There is no `--delete-after-success`: nothing is ever deleted
 automatically, so a rerun can never destroy previous output.

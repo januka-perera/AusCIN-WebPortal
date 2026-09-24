@@ -104,6 +104,10 @@ python -m json.tool "$HOME/auscin-staging/manifests/<root-id>.json"
 
 - [ ] `entries[].observation.root_id`, `.observation_id` match what
       was requested.
+- [ ] `entries[].observation.media_reference` matches the source
+      record's `attributes.image` exactly, and `.image_url` is built
+      from that same reference — neither is null unless the source
+      record truly omitted `attributes.image`.
 - [ ] `entries[].observation.spotted_at_raw` and `.spotted_at_utc` are
       both present (raw source value alongside the normalised UTC
       value — see README's "Timestamp interpretation policy").

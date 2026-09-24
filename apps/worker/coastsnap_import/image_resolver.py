@@ -1,13 +1,23 @@
 """Resolves and validates the Level 0 original image URL from a raw
 Spotteron spot record, plus a few other fields whose exact JSON path
-is still unconfirmed (latitude/longitude, media reference, contributor
-name, attribution permission).
+is still unconfirmed (latitude/longitude, contributor name,
+attribution permission).
 
 CONFIRMED, from a real Spotteron v2.4 response supplied by the project
 owner: ``attributes.image`` is not a URL — it is an opaque reference,
 e.g.::
 
     "000037/2026/09/23/gxbdt1a3e04qxc5ooa9llndgqzd4swa5"
+
+This same value is Spotteron's own "media reference" for the image —
+it is preserved exactly (never discarded once resolved) as both:
+
+    - ``ImageResolution.image_reference``, returned alongside the
+      resolved URL by ``ImageUrlResolver.resolve()``;
+    - ``resolve_media_reference()``'s primary candidate, for callers
+      that need the reference before/without resolving a URL (e.g.
+      ``--plan-only``, or parsing an observation before its image URL
+      has been validated).
 
 The single candidate download URL is built as::
 
@@ -18,21 +28,23 @@ with ``image_base_url`` defaulting to
 ``SPOTTERON_IMAGE_BASE_URL`` (see config.py). This module does not
 guess among several URL *formats* — exactly one candidate is built
 (or used directly, if a field already contains a full URL — kept as a
-forward-compatible path for if the API later returns one) — and that
-one candidate is validated with a real HTTP request (HEAD, falling
-back to a streamed GET whose body is never read) before being
-accepted. A failed validation raises ``ImageUrlResolutionError``
-carrying the observation ID, the image reference, the attempted URL
-and the HTTP status, so a failure is diagnosable without re-running
-anything.
+forward-compatible path for if the API later returns one; in that case
+there is no separate reference to preserve, so ``image_reference`` is
+``None``) — and that one candidate is validated with a real HTTP
+request (HEAD, falling back to a streamed GET whose body is never
+read) before being accepted. A failed validation raises
+``ImageUrlResolutionError`` carrying the observation ID, the image
+reference, the attempted URL and the HTTP status, so a failure is
+diagnosable without re-running anything.
 
-UNCONFIRMED: latitude/longitude, media reference, contributor name and
+UNCONFIRMED: latitude/longitude, contributor name and
 attribution-permission field names. Each is tried as an ordered list
 of candidate JSON paths; absence never becomes a guess.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Optional
 
 import requests
@@ -52,6 +64,7 @@ _IMAGE_REFERENCE_CANDIDATES: tuple[tuple[str, ...], ...] = (
 )
 
 _MEDIA_REFERENCE_CANDIDATES: tuple[tuple[str, ...], ...] = (
+    ("attributes", "image"),  # confirmed real field — same opaque reference used to build the Level 0 URL
     ("attributes", "image_id"),
     ("attributes", "media_id"),
     ("attributes", "photo_id"),
@@ -154,6 +167,24 @@ def peek_image_reference_or_url(raw_spot: dict[str, Any]) -> Optional[str]:
     return _first_string_match(raw_spot, _IMAGE_REFERENCE_CANDIDATES)
 
 
+@dataclass(frozen=True)
+class ImageResolution:
+    """The result of resolving one observation's Level 0 image.
+
+    ``image_reference`` is the exact, unmodified ``attributes.image``
+    value used to build ``url`` — never discarded once resolved, so a
+    caller can preserve it (e.g. as ``SourceObservation.media_reference``)
+    without having to independently re-derive it from the raw record.
+    It is ``None`` only when the API genuinely provided no separate
+    reference — i.e. a direct full URL field was used instead (see
+    _DIRECT_URL_CANDIDATES) — never as a side effect of resolution
+    itself losing the value.
+    """
+
+    url: str
+    image_reference: Optional[str]
+
+
 class ImageUrlResolver:
     """Resolves AND validates the Level 0 image URL for one observation.
 
@@ -181,8 +212,10 @@ class ImageUrlResolver:
             headers["Authorization"] = f"Bearer {self._bearer_token}"
         return headers
 
-    def resolve(self, raw_spot: dict[str, Any], observation_id: str) -> str:
-        """Returns a validated, usable Level 0 URL, or raises ImageUrlResolutionError."""
+    def resolve(self, raw_spot: dict[str, Any], observation_id: str) -> ImageResolution:
+        """Returns a validated, usable Level 0 URL AND the original image
+        reference it was built from (see ImageResolution), or raises
+        ImageUrlResolutionError."""
         direct_url = _first_string_match(raw_spot, _DIRECT_URL_CANDIDATES)
         image_reference: Optional[str] = None
 
@@ -201,7 +234,7 @@ class ImageUrlResolver:
             candidate_url = f"{self._image_base_url}/{image_reference}.jpg"
 
         self._validate(candidate_url, observation_id, image_reference)
-        return candidate_url
+        return ImageResolution(url=candidate_url, image_reference=image_reference)
 
     def _validate(self, url: str, observation_id: str, image_reference: Optional[str]) -> None:
         try:
