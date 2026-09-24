@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from coastsnap_import.config import DEFAULT_REMOTE_ROOT
 from coastsnap_import.manifest import ManifestError, ManifestStore
 from coastsnap_import.models import (
     ChecksumInfo,
@@ -90,6 +91,65 @@ def test_load_or_create_creates_new_manifest_when_missing(tmp_path: Path):
     )
     assert manifest.entries == []
     assert manifest.root_id == "37"
+
+
+def test_load_or_create_reuses_existing_manifest_when_remote_root_matches(tmp_path: Path):
+    path = tmp_path / "manifest.json"
+    store = ManifestStore()
+    first = store.load_or_create(
+        path, run_id="r1", root_id="37", topic_id=37,
+        date_from_utc=NOW, date_to_utc=NOW, remote_root="/g/data/qu34/AusCIN/coastsnap",
+    )
+    store.save(first, path)
+
+    second = store.load_or_create(
+        path, run_id="r2", root_id="37", topic_id=37,
+        date_from_utc=NOW, date_to_utc=NOW, remote_root="/g/data/qu34/AusCIN/coastsnap",
+    )
+    assert second.remote_root == "/g/data/qu34/AusCIN/coastsnap"
+
+
+def test_load_or_create_rejects_a_configured_remote_root_that_differs_from_the_existing_manifest(tmp_path: Path):
+    """The exact real-world failure this guards against: a manifest was
+    created recording one remote_root, and a later run resolves a
+    DIFFERENT value (whatever the reason — env edited, CLI flag added,
+    a different shell). Reusing the manifest would silently keep
+    displaying the OLD remote root while a real transfer goes to the
+    NEW one. This must raise, never silently pick either value."""
+    path = tmp_path / "manifest.json"
+    store = ManifestStore()
+    original = store.create(
+        run_id="r1", root_id="37", topic_id=37, date_from_utc=NOW, date_to_utc=NOW,
+        remote_root="/g/data/qu34/AusCIN/coastsnap-test",
+    )
+    store.save(original, path)
+
+    with pytest.raises(ManifestError, match="coastsnap-test.*coastsnap\\b"):
+        store.load_or_create(
+            path, run_id="r2", root_id="37", topic_id=37, date_from_utc=NOW, date_to_utc=NOW,
+            remote_root="/g/data/qu34/AusCIN/coastsnap",  # different: no "-test" suffix
+        )
+
+
+def test_load_or_create_rejects_default_remote_root_silently_overriding_an_explicit_one(tmp_path: Path):
+    """The default remote_root must never silently win over a manifest
+    that was created with an explicitly configured one — e.g. a rerun
+    where GADI_REMOTE_ROOT was accidentally unset falls back to
+    DEFAULT_REMOTE_ROOT, which must not be treated as equivalent to
+    the value the manifest was actually created with."""
+    path = tmp_path / "manifest.json"
+    store = ManifestStore()
+    explicit = store.create(
+        run_id="r1", root_id="37", topic_id=37, date_from_utc=NOW, date_to_utc=NOW,
+        remote_root="/g/data/qu34/AusCIN/coastsnap",  # explicitly configured, not the default
+    )
+    store.save(explicit, path)
+
+    with pytest.raises(ManifestError):
+        store.load_or_create(
+            path, run_id="r2", root_id="37", topic_id=37, date_from_utc=NOW, date_to_utc=NOW,
+            remote_root=DEFAULT_REMOTE_ROOT,  # the module default, resolved because the env var was unset
+        )
 
 
 def test_save_then_load_round_trips(tmp_path: Path):

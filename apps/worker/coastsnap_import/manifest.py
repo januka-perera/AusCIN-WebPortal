@@ -59,8 +59,32 @@ class ManifestStore:
         date_to_utc: datetime,
         remote_root: str,
     ) -> Manifest:
+        """Loads the existing manifest at ``path`` if present, otherwise
+        creates a fresh one.
+
+        ``remote_root`` here is the CURRENT run's single authoritative
+        value (WorkerConfig.remote_root — see config.py). If a manifest
+        already exists, its OWN recorded ``remote_root`` must match it
+        exactly: a manifest is meant to describe files transferred to
+        one remote location, so silently reusing a stale manifest under
+        a different remote_root would keep displaying the OLD location
+        while a real transfer actually goes to the NEW one — the exact
+        failure mode that this check exists to prevent (see
+        cli.py/config.py/README.md's "remote root consistency" notes).
+        Raises ManifestError rather than silently preferring either
+        value.
+        """
         existing = self.load(path)
         if existing is not None:
+            if existing.remote_root != remote_root:
+                raise ManifestError(
+                    f"Manifest at {path} was created with remote_root={existing.remote_root!r}, but the "
+                    f"current configuration resolves remote_root={remote_root!r}. Refusing to continue: "
+                    "reusing this manifest with a different remote root would record the wrong location "
+                    "for files that may already have been transferred. Fix GADI_REMOTE_ROOT/--remote-root "
+                    f"to match {existing.remote_root!r}, or use a different --manifest/--staging-dir if a "
+                    "new remote root is genuinely intended."
+                )
             return existing
         return self.create(run_id, root_id, topic_id, date_from_utc, date_to_utc, remote_root)
 

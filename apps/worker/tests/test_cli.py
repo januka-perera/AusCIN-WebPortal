@@ -262,6 +262,143 @@ def test_transfer_verifies_and_renames(base_env: Path, monkeypatch: pytest.Monke
 
 
 @responses.activate
+def test_configured_remote_root_used_consistently_everywhere(
+    base_env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture
+):
+    """Regression test for the real incident: a manifest recorded
+    remote_root=".../coastsnap-test" while files were actually written
+    to ".../coastsnap" on Gadi. Proves one configured remote root
+    (here: /g/data/qu34/AusCIN/coastsnap, deliberately NOT the default
+    "-test" suffix) is used identically for the SFTP upload, the
+    remote checksum verification, the rename, manifest.remote_root,
+    the displayed transfer paths, and the startup diagnostic."""
+    _mock_spots_page()
+    _mock_image_downloads()
+    key_path = tmp_path / "id_ed25519"
+    key_path.write_text("not a real key")
+    remote_root = "/g/data/qu34/AusCIN/coastsnap"
+    monkeypatch.setenv("GADI_SFTP_HOST", "gadi.example.test")
+    monkeypatch.setenv("GADI_SFTP_USERNAME", "ausc-ingest")
+    monkeypatch.setenv("GADI_SFTP_PRIVATE_KEY_PATH", str(key_path))
+    monkeypatch.setenv("GADI_REMOTE_ROOT", remote_root)
+
+    fake_transport = FakeSshSftpTransport()
+    monkeypatch.setattr(cli, "ParamikoSshSftpTransport", lambda options: fake_transport)
+
+    exit_code = cli.main(
+        [
+            "--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31",
+            "--transfer", "--max-images", "1", "--confirm-production-remote-root",
+        ]
+    )
+
+    assert exit_code == 0
+
+    # 1. Startup diagnostic (requirement 4): printed before any upload, no secrets.
+    stdout = capsys.readouterr().out
+    assert f"resolved remote_root={remote_root!r}" in stdout
+    assert "not a real key" not in stdout  # the key's own contents never appear
+
+    # 2. Manifest — the field that was wrong in the real incident.
+    manifest = json.loads((base_env / "manifests" / "37.json").read_text())
+    assert manifest["remote_root"] == remote_root
+
+    # 3. SFTP upload + 4. remote checksum verification + 5. remote rename —
+    # all go through FakeSshSftpTransport, which only ever sees paths built
+    # from remote_root; if any of them used a different value, these
+    # wouldn't start with it.
+    assert len(fake_transport.uploaded) == 2
+    for uploaded_path in fake_transport.uploaded:
+        assert uploaded_path.startswith(remote_root + "/")
+    assert len(fake_transport.renamed) == 2
+    for _from, to in fake_transport.renamed:
+        assert to.startswith(remote_root + "/")
+
+    # 6. Displayed transfer paths.
+    assert f"[transfer] uploading {remote_root}/" in stdout
+
+    # 7. Rerun/idempotency check: a second run against the SAME manifest
+    # with the SAME remote_root must not be rejected (matching value is fine).
+    second_transport = FakeSshSftpTransport()
+    second_transport.files.update(fake_transport.files)  # simulate the same remote state
+    monkeypatch.setattr(cli, "ParamikoSshSftpTransport", lambda options: second_transport)
+    second_exit = cli.main(
+        [
+            "--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31",
+            "--transfer", "--max-images", "1", "--confirm-production-remote-root",
+        ]
+    )
+    assert second_exit == 0
+
+
+def test_default_remote_root_cannot_silently_override_an_explicit_manifest_value(
+    base_env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """First run explicitly configures a non-default remote_root and
+    creates a manifest. A second run that DOESN'T set GADI_REMOTE_ROOT
+    (falling back to DEFAULT_REMOTE_ROOT) must refuse to proceed rather
+    than silently reusing the manifest under the wrong root — this is
+    the load_or_create() reconciliation check, exercised end-to-end."""
+    key_path = tmp_path / "id_ed25519"
+    key_path.write_text("not a real key")
+    monkeypatch.setenv("GADI_SFTP_HOST", "gadi.example.test")
+    monkeypatch.setenv("GADI_SFTP_USERNAME", "ausc-ingest")
+    monkeypatch.setenv("GADI_SFTP_PRIVATE_KEY_PATH", str(key_path))
+    monkeypatch.setenv("GADI_REMOTE_ROOT", "/scratch/ausc-ingest/coastsnap-explicit")
+    monkeypatch.setattr(cli, "ParamikoSshSftpTransport", lambda options: FakeSshSftpTransport())
+
+    args = [
+        "--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31",
+        "--transfer", "--max-images", "1",
+        # Needed for the SECOND run once GADI_REMOTE_ROOT falls back to the
+        # (production-prefixed) default; harmless for the first run, whose
+        # explicit remote_root isn't under /g/data/qu34 anyway.
+        "--confirm-production-remote-root",
+    ]
+    with responses.RequestsMock() as first_run_mocks:
+        first_run_mocks.add(responses.GET, SPOTS_URL, json=load_fixture("spotteron_page_1.json"), status=200)
+        # --max-images 1 only ever touches spot 1001, not 1002.
+        first_run_mocks.add(responses.HEAD, IMAGE_URL_1001, status=200, content_type="image/jpeg")
+        first_run_mocks.add(responses.GET, IMAGE_URL_1001, body=SAMPLE_IMAGE_BYTES, status=200, content_type="image/jpeg")
+        assert cli.main(args) == 0
+
+    # Now unset GADI_REMOTE_ROOT entirely: the second run resolves the
+    # module DEFAULT_REMOTE_ROOT instead of the explicit value above.
+    monkeypatch.delenv("GADI_REMOTE_ROOT")
+
+    # Deliberately no responses mock registered for the second call: it
+    # must fail on the remote-root mismatch before any network request.
+    second_exit = cli.main(args)
+
+    assert second_exit == 2
+
+
+def test_cli_and_env_remote_root_conflict_is_never_silent(
+    base_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+):
+    """--remote-root and GADI_REMOTE_ROOT disagreeing must never be
+    silently resolved — precedence (CLI wins) is applied, but only ever
+    visibly, with both conflicting values named in the diagnostic."""
+    monkeypatch.setenv("GADI_REMOTE_ROOT", "/scratch/from-env/coastsnap")
+
+    with responses.RequestsMock() as mocks:
+        mocks.add(responses.GET, SPOTS_URL, json=load_fixture("spotteron_page_1.json"), status=200)
+        exit_code = cli.main(
+            [
+                "--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31",
+                "--plan-only", "--remote-root", "/scratch/from-cli/coastsnap",
+            ]
+        )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    warning = captured.err
+    assert "/scratch/from-env/coastsnap" in warning
+    assert "/scratch/from-cli/coastsnap" in warning
+    assert "precedence" in warning.lower() or "takes precedence" in warning.lower()
+
+
+@responses.activate
 def test_idempotent_rerun_skips_without_reuploading(
     base_env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture
 ):

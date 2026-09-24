@@ -134,6 +134,19 @@ python -m json.tool "$HOME/auscin-staging/manifests/<root-id>.json"
 - [ ] The SSH private key file used for `--transfer` (once that stage
       is reached) has restrictive permissions (`chmod 600`) and lives
       outside the git checkout.
+- [ ] Before any real `--transfer`, read the printed
+      `[transfer] resolved remote_root='...'` startup diagnostic and
+      confirm it is exactly the destination you intend — this is the
+      single value used for the upload, the checksum verification, the
+      rename, and the manifest. If it doesn't match, stop and fix
+      `GADI_REMOTE_ROOT`/`--remote-root` before continuing (see
+      README's "Remote root consistency").
+- [ ] If reusing an existing manifest for `--transfer`, confirm its
+      `remote_root` field matches the destination you intend. A
+      mismatch is rejected automatically (`[config error]`, exit 2)
+      rather than silently transferring to a different location than
+      the manifest records — but if that error fires, do not work
+      around it without first understanding why the values disagree.
 
 ## 5. Confirm nothing generated or secret is committed
 

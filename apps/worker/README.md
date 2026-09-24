@@ -176,6 +176,30 @@ non-production test destination for routine testing, and only add
 `--confirm-production-remote-root` once you deliberately mean to write
 under `/g/data/qu34`.
 
+### Remote root consistency (single authoritative value)
+
+`config.remote_root` — resolved once per run from `--remote-root` (if
+given) or `GADI_REMOTE_ROOT` (env) or the module default, in that
+order of precedence — is the **only** value ever used for the SFTP
+upload path, the remote checksum verification, the rename, and
+`manifest.remote_root`. In `--transfer` mode this resolved value is
+printed at startup: `[transfer] resolved remote_root='...'`.
+
+If `--remote-root` and `GADI_REMOTE_ROOT` are both set and disagree,
+CLI always wins — but this is never silent: a `[warn]` naming both
+values is printed to stderr.
+
+If a manifest already exists at `--manifest`/the default manifest path
+and it was created with a **different** `remote_root` than the current
+run resolves, the run refuses to continue (`[config error]`, exit code
+2) rather than silently reusing the manifest under a different remote
+root — this is what would otherwise let a manifest keep displaying a
+stale location while a real transfer goes somewhere else entirely. To
+resolve it: either fix `GADI_REMOTE_ROOT`/`--remote-root` to match what
+the manifest already records, or point `--manifest`/`--staging-dir` at
+a fresh location if a different remote root is genuinely intended for
+a new manifest.
+
 ## Preflight check
 
 Before a real run, verify the environment without touching Gadi or

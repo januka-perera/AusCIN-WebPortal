@@ -109,7 +109,7 @@ from .image_resolver import (
     resolve_longitude,
     resolve_media_reference,
 )
-from .manifest import ManifestStore
+from .manifest import ManifestError, ManifestStore
 from .metadata_embedder import MetadataEmbeddingError, MetadataFields, build_embedder
 from .models import (
     ManifestEntry,
@@ -327,6 +327,13 @@ def run(
     transport: Optional[SshSftpTransport] = None
     publisher: Optional[SftpPublisher] = None
     if mode is RunMode.TRANSFER:
+        # Startup diagnostic: the single resolved value that will be used
+        # for every SFTP upload, checksum verification and rename below —
+        # printed so an operator can catch a wrong remote root before any
+        # file moves, without ever printing a secret (host/username/key
+        # path are not secrets; the private key's own contents are never
+        # touched here).
+        print(f"[transfer] resolved remote_root={config.remote_root!r} (host={config.gadi_sftp_host!r})")
         sftp_options = ParamikoSshSftpOptions(
             host=config.gadi_sftp_host,  # type: ignore[arg-type]  # validated by require_transfer_fields()
             port=config.gadi_sftp_port,
@@ -383,6 +390,7 @@ def run(
                     embedder=embedder,
                     embedder_backend=config.metadata_backend,
                     staging_dir=config.staging_dir,
+                    remote_root=config.remote_root,
                     attempt_transfer=(mode is RunMode.TRANSFER),
                     publisher=publisher,
                     existing_entry=existing_entry,
@@ -458,6 +466,7 @@ def _ingest_one(
     embedder,
     embedder_backend: str,
     staging_dir: Path,
+    remote_root: str,
     attempt_transfer: bool,
     publisher: Optional[SftpPublisher],
     existing_entry: Optional[ManifestEntry],
@@ -537,6 +546,7 @@ def _ingest_one(
     if attempt_transfer:
         assert publisher is not None
         if level0_transfer is None:
+            print(f"[transfer] uploading {_display_remote_path(remote_root, level0.remote_relative_path)}")
             level0_transfer = publisher.publish(
                 local_path=staging_dir / level0.local_relative_path,
                 remote_relative_path=level0.remote_relative_path,
@@ -544,6 +554,7 @@ def _ingest_one(
                 product_id=level0.product_id,
             )
         if level1_transfer is None:
+            print(f"[transfer] uploading {_display_remote_path(remote_root, level1.remote_relative_path)}")
             level1_transfer = publisher.publish(
                 local_path=level1_local_path,
                 remote_relative_path=level1.remote_relative_path,
@@ -551,7 +562,10 @@ def _ingest_one(
                 product_id=level1.product_id,
             )
     elif level0_transfer is None or level1_transfer is None:
-        print(f"[process-local] would transfer {level0.remote_relative_path} and {level1.remote_relative_path} in --transfer mode")
+        print(
+            f"[process-local] would transfer {_display_remote_path(remote_root, level0.remote_relative_path)} "
+            f"and {_display_remote_path(remote_root, level1.remote_relative_path)} in --transfer mode"
+        )
 
     entry = ManifestEntry(
         site=site,
@@ -564,6 +578,14 @@ def _ingest_one(
         ingested_at_utc=datetime.now(timezone.utc),
     )
     return IngestOutcome(entry=entry, fully_reused_locally=(level0_reused and level1_reused))
+
+
+def _display_remote_path(remote_root: str, relative_path: str) -> str:
+    """Builds the same absolute remote path SftpPublisher._absolute()
+    would, purely for display — so a printed "would transfer" path is
+    never allowed to imply a different destination than where a real
+    --transfer would actually put the file."""
+    return f"{remote_root.rstrip('/')}/{relative_path}"
 
 
 def _infer_suffix(url: str) -> str:
@@ -646,6 +668,21 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     mode = resolve_run_mode(args)
 
+    # GADI_REMOTE_ROOT (env) and --remote-root (CLI) must never silently
+    # disagree: precedence is CLI-wins (consistent with every other
+    # env/CLI pair in this codebase — see WorkerConfig.from_env), but for
+    # a value this consequential (get it wrong and files land in the
+    # wrong place on Gadi, or worse, under production storage) that
+    # precedence is surfaced loudly rather than applied silently.
+    env_remote_root = os.environ.get("GADI_REMOTE_ROOT")
+    if args.remote_root and env_remote_root and args.remote_root != env_remote_root:
+        print(
+            f"[warn] --remote-root ({args.remote_root!r}) and GADI_REMOTE_ROOT ({env_remote_root!r}) "
+            f"disagree. Using --remote-root ({args.remote_root!r}) — CLI always takes precedence over "
+            "the environment. Fix one of them if this is not intended.",
+            file=sys.stderr,
+        )
+
     try:
         date_from_utc, date_to_utc = _parse_utc_date_range(args.date_from, args.date_to)
         config = WorkerConfig.from_env(
@@ -675,6 +712,9 @@ def main(argv: Optional[list[str]] = None) -> int:
             allow_production_remote_root=args.confirm_production_remote_root,
         )
     except ConfigError as exc:
+        print(f"[config error] {exc}", file=sys.stderr)
+        return 2
+    except ManifestError as exc:
         print(f"[config error] {exc}", file=sys.stderr)
         return 2
 
