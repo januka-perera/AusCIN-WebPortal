@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "root_id": "TEST_ROOT_ID",
+  "derivatives": [
+    {
+      "observation_id": "TEST_OBS_0001",
+      "width": 4032,
+      "height": 3024,
+      "thumbnail_relative_path": "derivatives/thumbnails/root-TEST_ROOT_ID/2026/08/01/TEST_OBS_0001.jpg",
+      "preview_relative_path": "derivatives/previews/root-TEST_ROOT_ID/2026/08/01/TEST_OBS_0001.jpg"
+    },
+    {
+      "observation_id": "TEST_OBS_0002",
+      "width": 4032,
+      "height": 3024,
+      "thumbnail_relative_path": "derivatives/thumbnails/root-TEST_ROOT_ID/2026/08/02/TEST_OBS_0002.jpg",
+      "preview_relative_path": "derivatives/previews/root-TEST_ROOT_ID/2026/08/02/TEST_OBS_0002.jpg"
+    },
+    {
+      "observation_id": "TEST_OBS_0003",
+      "thumbnail_relative_path": "derivatives/thumbnails/root-TEST_ROOT_ID/2026/08/10/TEST_OBS_0003.jpg",
+      "preview_relative_path": "derivatives/previews/root-TEST_ROOT_ID/2026/08/10/TEST_OBS_0003.jpg"
+    },
+    {
+      "observation_id": "TEST_OBS_0004",
+      "thumbnail_relative_path": "derivatives/thumbnails/root-TEST_ROOT_ID/2026/08/20/TEST_OBS_0004.jpg"
+    }
+  ]
+}

@@ -1,0 +1,399 @@
+{
+  "run_id": "20260902T010000Z",
+  "root_id": "TEST_ROOT_ID",
+  "topic_id": 37,
+  "date_from_utc": "2026-08-01T00:00:00Z",
+  "date_to_utc": "2026-09-02T00:00:00Z",
+  "generated_at_utc": "2026-09-02T01:00:00Z",
+  "remote_root": "TEST_PUBLICATION_ROOT",
+  "entries": [
+    {
+      "site": {
+        "root_id": "TEST_ROOT_ID",
+        "name": null,
+        "latitude": null,
+        "longitude": null
+      },
+      "observation": {
+        "observation_id": "TEST_OBS_0001",
+        "root_id": "TEST_ROOT_ID",
+        "spotted_at_raw": "2026-08-01 22:30:00",
+        "spotted_at_utc": "2026-08-01T22:30:00Z",
+        "latitude": -33.0,
+        "longitude": 151.0,
+        "image_url": "https://example.invalid/test-images/TEST_OBS_0001.jpg",
+        "media_reference": "TEST_MEDIA_REF_0001",
+        "contributor_display_name": null,
+        "contributor_attribution_permitted": false
+      },
+      "source_record_ref": {
+        "site_record_relative_path": "metadata/source-records/sites/TEST_ROOT_ID.json",
+        "observation_record_relative_path": "metadata/source-records/observations/TEST_OBS_0001.json"
+      },
+      "level0": {
+        "product_id": "TEST_OBS_0001-L0",
+        "product_level": "level0",
+        "parent_observation_id": "TEST_OBS_0001",
+        "source_url": "https://example.invalid/test-images/TEST_OBS_0001.jpg",
+        "local_relative_path": "level-0/root-TEST_ROOT_ID/2026/08/01/images/TEST_OBS_0001.jpg",
+        "remote_relative_path": "level-0/root-TEST_ROOT_ID/2026/08/01/images/TEST_OBS_0001.jpg",
+        "file_size_bytes": 685,
+        "content_type": "image/jpeg",
+        "checksum": {
+          "sha256": "f812875b6c299e1841a2c2534f4575e8d1cd977336de19996bda369328233857",
+          "computed_at_utc": "2026-09-02T01:00:00Z"
+        },
+        "downloaded_at_utc": "2026-09-02T01:00:00Z"
+      },
+      "level1": {
+        "product_id": "TEST_OBS_0001-L1",
+        "product_level": "level1",
+        "parent_product_id": "TEST_OBS_0001-L0",
+        "parent_observation_id": "TEST_OBS_0001",
+        "local_relative_path": "level-1/root-TEST_ROOT_ID/2026/08/01/images/TEST_OBS_0001.jpg",
+        "remote_relative_path": "level-1/root-TEST_ROOT_ID/2026/08/01/images/TEST_OBS_0001.jpg",
+        "file_size_bytes": 685,
+        "checksum": {
+          "sha256": "5a0efd023e3d18297020cbcd68b02a3c6df3563a341cb86474006b1670c8fa95",
+          "computed_at_utc": "2026-09-02T01:00:00Z"
+        },
+        "processing": {
+          "embedder_backend": "exiftool",
+          "embedded_metadata_fields": [
+            "XMP-auscin:SourcePlatform"
+          ],
+          "processing_software": "coastsnap-import",
+          "processing_version": "0.1.0",
+          "processed_at_utc": "2026-09-02T01:00:00Z"
+        }
+      },
+      "level0_transfer": null,
+      "level1_transfer": null,
+      "ingested_at_utc": "2026-09-02T01:00:00Z",
+      "schema_version": 1
+    },
+    {
+      "site": {
+        "root_id": "TEST_ROOT_ID",
+        "name": null,
+        "latitude": null,
+        "longitude": null
+      },
+      "observation": {
+        "observation_id": "TEST_OBS_0002",
+        "root_id": "TEST_ROOT_ID",
+        "spotted_at_raw": "2026-08-02 03:15:00",
+        "spotted_at_utc": "2026-08-02T03:15:00Z",
+        "latitude": -33.0,
+        "longitude": 151.0,
+        "image_url": "https://example.invalid/test-images/TEST_OBS_0002.jpg",
+        "media_reference": "TEST_MEDIA_REF_0002",
+        "contributor_display_name": null,
+        "contributor_attribution_permitted": false
+      },
+      "source_record_ref": {
+        "site_record_relative_path": "metadata/source-records/sites/TEST_ROOT_ID.json",
+        "observation_record_relative_path": "metadata/source-records/observations/TEST_OBS_0002.json"
+      },
+      "level0": {
+        "product_id": "TEST_OBS_0002-L0",
+        "product_level": "level0",
+        "parent_observation_id": "TEST_OBS_0002",
+        "source_url": "https://example.invalid/test-images/TEST_OBS_0002.jpg",
+        "local_relative_path": "level-0/root-TEST_ROOT_ID/2026/08/02/images/TEST_OBS_0002.jpg",
+        "remote_relative_path": "level-0/root-TEST_ROOT_ID/2026/08/02/images/TEST_OBS_0002.jpg",
+        "file_size_bytes": 685,
+        "content_type": "image/jpeg",
+        "checksum": {
+          "sha256": "132e348f7f52daaca4d68d49907903bf842c30896455b138c18a73a007fdc9c2",
+          "computed_at_utc": "2026-09-02T01:00:00Z"
+        },
+        "downloaded_at_utc": "2026-09-02T01:00:00Z"
+      },
+      "level1": {
+        "product_id": "TEST_OBS_0002-L1",
+        "product_level": "level1",
+        "parent_product_id": "TEST_OBS_0002-L0",
+        "parent_observation_id": "TEST_OBS_0002",
+        "local_relative_path": "level-1/root-TEST_ROOT_ID/2026/08/02/images/TEST_OBS_0002.jpg",
+        "remote_relative_path": "level-1/root-TEST_ROOT_ID/2026/08/02/images/TEST_OBS_0002.jpg",
+        "file_size_bytes": 685,
+        "checksum": {
+          "sha256": "7c28a1da5a13dbd388c6f7e5735877f6500d72a0939536300ec2853ddbddb018",
+          "computed_at_utc": "2026-09-02T01:00:00Z"
+        },
+        "processing": {
+          "embedder_backend": "exiftool",
+          "embedded_metadata_fields": [
+            "XMP-auscin:SourcePlatform"
+          ],
+          "processing_software": "coastsnap-import",
+          "processing_version": "0.1.0",
+          "processed_at_utc": "2026-09-02T01:00:00Z"
+        }
+      },
+      "level0_transfer": null,
+      "level1_transfer": null,
+      "ingested_at_utc": "2026-09-02T01:00:00Z",
+      "schema_version": 1
+    },
+    {
+      "site": {
+        "root_id": "TEST_ROOT_ID",
+        "name": null,
+        "latitude": null,
+        "longitude": null
+      },
+      "observation": {
+        "observation_id": "TEST_OBS_0003",
+        "root_id": "TEST_ROOT_ID",
+        "spotted_at_raw": "2026-08-10 06:45:00",
+        "spotted_at_utc": "2026-08-10T06:45:00Z",
+        "latitude": -33.0,
+        "longitude": 151.0,
+        "image_url": "https://example.invalid/test-images/TEST_OBS_0003.jpg",
+        "media_reference": "TEST_MEDIA_REF_0003",
+        "contributor_display_name": null,
+        "contributor_attribution_permitted": false
+      },
+      "source_record_ref": {
+        "site_record_relative_path": "metadata/source-records/sites/TEST_ROOT_ID.json",
+        "observation_record_relative_path": "metadata/source-records/observations/TEST_OBS_0003.json"
+      },
+      "level0": {
+        "product_id": "TEST_OBS_0003-L0",
+        "product_level": "level0",
+        "parent_observation_id": "TEST_OBS_0003",
+        "source_url": "https://example.invalid/test-images/TEST_OBS_0003.jpg",
+        "local_relative_path": "level-0/root-TEST_ROOT_ID/2026/08/10/images/TEST_OBS_0003.jpg",
+        "remote_relative_path": "level-0/root-TEST_ROOT_ID/2026/08/10/images/TEST_OBS_0003.jpg",
+        "file_size_bytes": 685,
+        "content_type": "image/jpeg",
+        "checksum": {
+          "sha256": "d47b752ed21f46851d17eee04b429c0d54ff7251d0d1e69470ce49874ce93c64",
+          "computed_at_utc": "2026-09-02T01:00:00Z"
+        },
+        "downloaded_at_utc": "2026-09-02T01:00:00Z"
+      },
+      "level1": {
+        "product_id": "TEST_OBS_0003-L1",
+        "product_level": "level1",
+        "parent_product_id": "TEST_OBS_0003-L0",
+        "parent_observation_id": "TEST_OBS_0003",
+        "local_relative_path": "level-1/root-TEST_ROOT_ID/2026/08/10/images/TEST_OBS_0003.jpg",
+        "remote_relative_path": "level-1/root-TEST_ROOT_ID/2026/08/10/images/TEST_OBS_0003.jpg",
+        "file_size_bytes": 685,
+        "checksum": {
+          "sha256": "d7089e60d0ca47d2735b8af7862fe146401377b064b0e07a687d004fcd469c12",
+          "computed_at_utc": "2026-09-02T01:00:00Z"
+        },
+        "processing": {
+          "embedder_backend": "exiftool",
+          "embedded_metadata_fields": [
+            "XMP-auscin:SourcePlatform"
+          ],
+          "processing_software": "coastsnap-import",
+          "processing_version": "0.1.0",
+          "processed_at_utc": "2026-09-02T01:00:00Z"
+        }
+      },
+      "level0_transfer": null,
+      "level1_transfer": null,
+      "ingested_at_utc": "2026-09-02T01:00:00Z",
+      "schema_version": 1
+    },
+    {
+      "site": {
+        "root_id": "TEST_ROOT_ID",
+        "name": null,
+        "latitude": null,
+        "longitude": null
+      },
+      "observation": {
+        "observation_id": "TEST_OBS_0004",
+        "root_id": "TEST_ROOT_ID",
+        "spotted_at_raw": "2026-08-20 21:05:00",
+        "spotted_at_utc": "2026-08-20T21:05:00Z",
+        "latitude": -33.0,
+        "longitude": 151.0,
+        "image_url": "https://example.invalid/test-images/TEST_OBS_0004.jpg",
+        "media_reference": "TEST_MEDIA_REF_0004",
+        "contributor_display_name": null,
+        "contributor_attribution_permitted": false
+      },
+      "source_record_ref": {
+        "site_record_relative_path": "metadata/source-records/sites/TEST_ROOT_ID.json",
+        "observation_record_relative_path": "metadata/source-records/observations/TEST_OBS_0004.json"
+      },
+      "level0": {
+        "product_id": "TEST_OBS_0004-L0",
+        "product_level": "level0",
+        "parent_observation_id": "TEST_OBS_0004",
+        "source_url": "https://example.invalid/test-images/TEST_OBS_0004.jpg",
+        "local_relative_path": "level-0/root-TEST_ROOT_ID/2026/08/20/images/TEST_OBS_0004.jpg",
+        "remote_relative_path": "level-0/root-TEST_ROOT_ID/2026/08/20/images/TEST_OBS_0004.jpg",
+        "file_size_bytes": 685,
+        "content_type": "image/jpeg",
+        "checksum": {
+          "sha256": "4c9f0714207bee4f01809f1d3369cb6e7c74cff7c9ef63775272fe8bb37df1a1",
+          "computed_at_utc": "2026-09-02T01:00:00Z"
+        },
+        "downloaded_at_utc": "2026-09-02T01:00:00Z"
+      },
+      "level1": {
+        "product_id": "TEST_OBS_0004-L1",
+        "product_level": "level1",
+        "parent_product_id": "TEST_OBS_0004-L0",
+        "parent_observation_id": "TEST_OBS_0004",
+        "local_relative_path": "level-1/root-TEST_ROOT_ID/2026/08/20/images/TEST_OBS_0004.jpg",
+        "remote_relative_path": "level-1/root-TEST_ROOT_ID/2026/08/20/images/TEST_OBS_0004.jpg",
+        "file_size_bytes": 685,
+        "checksum": {
+          "sha256": "bd75d6020fe1358042a86acbfc6bd52db67bd185ab5b1c830b0d37c975f27a26",
+          "computed_at_utc": "2026-09-02T01:00:00Z"
+        },
+        "processing": {
+          "embedder_backend": "exiftool",
+          "embedded_metadata_fields": [
+            "XMP-auscin:SourcePlatform"
+          ],
+          "processing_software": "coastsnap-import",
+          "processing_version": "0.1.0",
+          "processed_at_utc": "2026-09-02T01:00:00Z"
+        }
+      },
+      "level0_transfer": null,
+      "level1_transfer": null,
+      "ingested_at_utc": "2026-09-02T01:00:00Z",
+      "schema_version": 1
+    },
+    {
+      "site": {
+        "root_id": "TEST_ROOT_ID",
+        "name": null,
+        "latitude": null,
+        "longitude": null
+      },
+      "observation": {
+        "observation_id": "TEST_OBS_0005",
+        "root_id": "TEST_ROOT_ID",
+        "spotted_at_raw": "2026-09-01 00:10:00",
+        "spotted_at_utc": "2026-09-01T00:10:00Z",
+        "latitude": -33.0,
+        "longitude": 151.0,
+        "image_url": "https://example.invalid/test-images/TEST_OBS_0005.jpg",
+        "media_reference": "TEST_MEDIA_REF_0005",
+        "contributor_display_name": null,
+        "contributor_attribution_permitted": false
+      },
+      "source_record_ref": {
+        "site_record_relative_path": "metadata/source-records/sites/TEST_ROOT_ID.json",
+        "observation_record_relative_path": "metadata/source-records/observations/TEST_OBS_0005.json"
+      },
+      "level0": {
+        "product_id": "TEST_OBS_0005-L0",
+        "product_level": "level0",
+        "parent_observation_id": "TEST_OBS_0005",
+        "source_url": "https://example.invalid/test-images/TEST_OBS_0005.jpg",
+        "local_relative_path": "level-0/root-TEST_ROOT_ID/2026/09/01/images/TEST_OBS_0005.jpg",
+        "remote_relative_path": "level-0/root-TEST_ROOT_ID/2026/09/01/images/TEST_OBS_0005.jpg",
+        "file_size_bytes": 685,
+        "content_type": "image/jpeg",
+        "checksum": {
+          "sha256": "72b3ee6dfeb1732064ca1b6a3f836de446c181197505f5f01819bebabc849ad0",
+          "computed_at_utc": "2026-09-02T01:00:00Z"
+        },
+        "downloaded_at_utc": "2026-09-02T01:00:00Z"
+      },
+      "level1": {
+        "product_id": "TEST_OBS_0005-L1",
+        "product_level": "level1",
+        "parent_product_id": "TEST_OBS_0005-L0",
+        "parent_observation_id": "TEST_OBS_0005",
+        "local_relative_path": "level-1/root-TEST_ROOT_ID/2026/09/01/images/TEST_OBS_0005.jpg",
+        "remote_relative_path": "level-1/root-TEST_ROOT_ID/2026/09/01/images/TEST_OBS_0005.jpg",
+        "file_size_bytes": 685,
+        "checksum": {
+          "sha256": "f8798bbdd5b5f5d0116d40fbf8030699ad24e7182e0518953f689fc35893e2f3",
+          "computed_at_utc": "2026-09-02T01:00:00Z"
+        },
+        "processing": {
+          "embedder_backend": "exiftool",
+          "embedded_metadata_fields": [
+            "XMP-auscin:SourcePlatform"
+          ],
+          "processing_software": "coastsnap-import",
+          "processing_version": "0.1.0",
+          "processed_at_utc": "2026-09-02T01:00:00Z"
+        }
+      },
+      "level0_transfer": {
+        "product_id": "TEST_OBS_0005-L0",
+        "remote_relative_path": "level-0/root-TEST_ROOT_ID/2026/09/01/images/TEST_OBS_0005.jpg",
+        "remote_part_relative_path": "level-0/root-TEST_ROOT_ID/2026/09/01/images/TEST_OBS_0005.jpg.part",
+        "state": "verified",
+        "attempts": 1,
+        "last_attempt_at_utc": "2026-09-02T01:00:00Z",
+        "remote_checksum": "72b3ee6dfeb1732064ca1b6a3f836de446c181197505f5f01819bebabc849ad0",
+        "error_message": null
+      },
+      "level1_transfer": {
+        "product_id": "TEST_OBS_0005-L1",
+        "remote_relative_path": "level-1/root-TEST_ROOT_ID/2026/09/01/images/TEST_OBS_0005.jpg",
+        "remote_part_relative_path": "level-1/root-TEST_ROOT_ID/2026/09/01/images/TEST_OBS_0005.jpg.part",
+        "state": "verified",
+        "attempts": 1,
+        "last_attempt_at_utc": "2026-09-02T01:00:00Z",
+        "remote_checksum": "f8798bbdd5b5f5d0116d40fbf8030699ad24e7182e0518953f689fc35893e2f3",
+        "error_message": null
+      },
+      "ingested_at_utc": "2026-09-02T01:00:00Z",
+      "schema_version": 1
+    },
+    {
+      "site": {
+        "root_id": "TEST_ROOT_ID",
+        "name": null,
+        "latitude": null,
+        "longitude": null
+      },
+      "observation": {
+        "observation_id": "TEST_OBS_0006",
+        "root_id": "TEST_ROOT_ID",
+        "spotted_at_raw": "2026-09-01 04:00:00",
+        "spotted_at_utc": "2026-09-01T04:00:00Z",
+        "latitude": -33.0,
+        "longitude": 151.0,
+        "image_url": "https://example.invalid/test-images/TEST_OBS_0006.jpg",
+        "media_reference": "TEST_MEDIA_REF_0006",
+        "contributor_display_name": null,
+        "contributor_attribution_permitted": false
+      },
+      "source_record_ref": {
+        "site_record_relative_path": "metadata/source-records/sites/TEST_ROOT_ID.json",
+        "observation_record_relative_path": "metadata/source-records/observations/TEST_OBS_0006.json"
+      },
+      "level0": {
+        "product_id": "TEST_OBS_0006-L0",
+        "product_level": "level0",
+        "parent_observation_id": "TEST_OBS_0006",
+        "source_url": "https://example.invalid/test-images/TEST_OBS_0006.jpg",
+        "local_relative_path": "level-0/root-TEST_ROOT_ID/2026/09/01/images/TEST_OBS_0006.jpg",
+        "remote_relative_path": "level-0/root-TEST_ROOT_ID/2026/09/01/images/TEST_OBS_0006.jpg",
+        "file_size_bytes": 685,
+        "content_type": "image/jpeg",
+        "checksum": {
+          "sha256": "b52d1eb5de14c4c76e741930003977cc945450e3ec605194af67b9cd58cf0523",
+          "computed_at_utc": "2026-09-02T01:00:00Z"
+        },
+        "downloaded_at_utc": "2026-09-02T01:00:00Z"
+      },
+      "level1": null,
+      "level0_transfer": null,
+      "level1_transfer": null,
+      "ingested_at_utc": "2026-09-02T01:00:00Z",
+      "schema_version": 1
+    }
+  ],
+  "schema_version": 1
+}

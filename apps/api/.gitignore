@@ -1,0 +1,5 @@
+# Repository-local pytest base temp (see tests/conftest.py) — cleared every run.
+.pytest-tmp/
+
+# Generated synthetic media root for local uvicorn runs (tests/fixtures/synthetic_media.py).
+.local-media/

@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "sites": [
+    {
+      "site_id": "CS-TEST-SITE",
+      "spotteron_root_id": "TEST_ROOT_ID",
+      "name": "Test Beach CoastSnap",
+      "state": "NSW",
+      "region": "Synthetic test region",
+      "description": "Synthetic CoastSnap site used only by the API test suite and local development. Not a real location.",
+      "latitude": -33.0,
+      "longitude": 151.0,
+      "display_time_zone": "Australia/Sydney",
+      "status": "active",
+      "established_since": "2026-07-01",
+      "publication_status": "public",
+      "original_download_permitted": true,
+      "attribution_text": "CoastSnap community photo (synthetic test data)",
+      "is_synthetic": true
+    },
+    {
+      "site_id": "CS-TEST-HIDDEN",
+      "spotteron_root_id": "TEST_ROOT_ID_HIDDEN",
+      "name": "Hidden Test Point CoastSnap",
+      "state": "VIC",
+      "region": "Synthetic test region",
+      "description": "Synthetic embargoed site. Must never appear in any API response.",
+      "latitude": -38.0,
+      "longitude": 144.0,
+      "display_time_zone": "Australia/Melbourne",
+      "status": "active",
+      "established_since": "2026-07-01",
+      "publication_status": "embargoed",
+      "original_download_permitted": false,
+      "attribution_text": "CoastSnap community photo (synthetic test data)",
+      "is_synthetic": true
+    }
+  ]
+}

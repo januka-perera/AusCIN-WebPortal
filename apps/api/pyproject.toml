@@ -1,0 +1,32 @@
+[project]
+name = "auscin-api"
+version = "0.1.0"
+description = "AusCIN catalogue API: read-only, fixture-backed CoastSnap catalogue (first local milestone)."
+requires-python = ">=3.11"
+# The worker manifest schema is imported from the sibling `coastsnap-import`
+# package (apps/worker) rather than redefined here. It is deliberately NOT
+# listed as a dependency: it isn't published, and naming it here would let
+# pip look for an unrelated package of the same name on PyPI. Install it
+# from the checkout first — see README.md.
+dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.30,<1",
+    "pydantic>=2,<3",
+    "tzdata>=2024.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+    "httpx>=0.27,<1",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["auscin_api*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
