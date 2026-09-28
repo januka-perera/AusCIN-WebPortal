@@ -49,15 +49,25 @@ steps 5–10 is `scripts/coastsnap_e2e_smoke.py`.
 
 ## 0. Prepare the site configuration (offline)
 
-On the Nectar VM, from the repository checkout. The worker and API virtual
-environments are set up per `apps/worker/README.md` and `apps/api/README.md`:
+The exact first-session commands for steps 0–2 are in
+[`coastsnap-nectar-first-run.md`](coastsnap-nectar-first-run.md). They
+cover cloning the branch, creating both virtual environments, the
+validator, preflight and one `--plan-only` request, and they end with a
+mandatory review stop. The summary below assumes that setup.
+
+On the Nectar VM, from the repository checkout:
 
 ```bash
-mkdir -p "$HOME/auscin-site"
+install -d -m 700 "$HOME/auscin-site"
 cp apps/api/config/coastsnap-site.env.example "$HOME/auscin-site/coastsnap-site.env"
-chmod 600 "$HOME/auscin-site/coastsnap-site.env"
-# Edit it and replace every <...> placeholder. Quote values containing
-# spaces, e.g. COASTSNAP_SITE_DESCRIPTION="...".
+cp apps/worker/.env.example "$HOME/auscin-site/worker.env"
+chmod 600 "$HOME/auscin-site/coastsnap-site.env" "$HOME/auscin-site/worker.env"
+# Edit coastsnap-site.env and replace every <...> placeholder. Quote values
+# containing spaces with single quotes, e.g. COASTSNAP_SITE_DESCRIPTION='...'.
+# Leave NCI_PUBLICATION_ROOT empty until step 11: an unreplaced <...> would
+# break `source`.
+# In worker.env, set SPOTTERON_BASE_URL. Leave COASTSNAP_STAGING_DIR and
+# every GADI_* value empty.
 # Suggested local paths:
 #   COASTSNAP_STAGING_DIR=$HOME/auscin-staging
 #   COASTSNAP_DERIVATIVES_ROOT=$HOME/auscin-derivatives
@@ -82,12 +92,15 @@ all of the following:
 
 It never contacts Spotteron, Gadi or NCI.
 
-Load the configuration into the shell for the remaining steps. The worker
-also reads `COASTSNAP_STAGING_DIR` from it:
+Load the configuration into the shell for the remaining steps. Load the
+worker settings **first** and the site file **second**. The worker template
+contains an empty `COASTSNAP_STAGING_DIR=` line, so loading it second would
+blank out the real staging directory:
 
 ```bash
-set -a; source "$HOME/auscin-site/coastsnap-site.env"; source apps/worker/.env; set +a
-# apps/worker/.env holds SPOTTERON_BASE_URL etc. Leave every GADI_* value unset until step 11.
+set -a; source "$HOME/auscin-site/worker.env"; source "$HOME/auscin-site/coastsnap-site.env"; set +a
+# worker.env holds SPOTTERON_BASE_URL etc. It lives outside the checkout.
+# Leave every GADI_* value unset until step 11.
 ```
 
 ## 1. Worker preflight
@@ -246,8 +259,12 @@ receive and looks them up in the worker's own manifest.
 
 ## 11. Only after review: SFTP transfer
 
-Review steps 1–10 with the project owner first. Then set the Gadi
-configuration in `apps/worker/.env` and validate for transfer:
+Review steps 1–10 with the project owner first. Then:
+
+1. Set the Gadi configuration in `$HOME/auscin-site/worker.env`, outside the
+   checkout, and set `NCI_PUBLICATION_ROOT` in `coastsnap-site.env`.
+2. Reload both files, in the same order as in step 0.
+3. Validate for transfer:
 
 ```bash
 apps/api/.venv/bin/python -m auscin_api.site_config validate --env-file "$HOME/auscin-site/coastsnap-site.env" --for-transfer

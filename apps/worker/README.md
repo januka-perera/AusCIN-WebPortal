@@ -60,7 +60,10 @@ path inside the git checkout.
     below. Do not delete the staging directory before you've actually
     looked at the files; there is no undo.
 
-> **Preparing the real test site?** Follow
+> **Preparing the real test site?** Start with
+> [`docs/implementation/coastsnap-nectar-first-run.md`](../../docs/implementation/coastsnap-nectar-first-run.md).
+> It gives the exact first Nectar session: setup, validator, preflight and
+> one `--plan-only` request, then a review stop. After that, continue with
 > [`docs/implementation/coastsnap-real-site-staging.md`](../../docs/implementation/coastsnap-real-site-staging.md).
 > It wraps this procedure with an offline configuration check
 > (`python -m auscin_api.site_config validate`), a `--plan-only` run, a capped

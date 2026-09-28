@@ -50,6 +50,10 @@ Status: **in progress.** Date: 2026-09-28.
     "CoastSnap catalogue unavailable | AusCIN".
   - See "Local end-to-end workflow" in `apps/api/README.md`.
 - The real-site staging workflow is prepared but has not been run:
+  - [`coastsnap-nectar-first-run.md`](coastsnap-nectar-first-run.md) is the
+    operator's exact first Nectar session: branch setup, virtual
+    environments, validator, preflight and one `--plan-only` request, then a
+    review stop.
   - [`coastsnap-real-site-staging.md`](coastsnap-real-site-staging.md) is the
     11-step runbook, using placeholders only.
   - `apps/api/config/coastsnap-site.env.example` is the site configuration
