@@ -60,8 +60,13 @@ export interface CoastSnapSite {
   status: OperatingStatus;
   /** ISO date the site was set up for public contributions, e.g. "2024-11-01". */
   establishedSince: string;
-  /** Path to a representative image, served from public/sample-media. Never a filesystem path. */
-  representativeImageUrl: string;
+  /**
+   * A representative image: a public/sample-media path for sample sites, or an
+   * API media URL. Null when the source has none. The catalogue API currently
+   * never provides one, so pages fall back to the site's latest observation.
+   * Never a filesystem path.
+   */
+  representativeImageUrl: string | null;
   /** True while a site exists only as a local development fixture, with no corresponding real Spotteron spot. */
   isSynthetic: boolean;
 }

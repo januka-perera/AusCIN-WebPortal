@@ -27,7 +27,18 @@ Status: **in progress.** Date: 2026-09-28.
   - The API gained an optional `COASTSNAP_DERIVATIVES_ROOT`, checksum ETags
     for derivatives, and a rule that drops stale index entries. Its public
     URLs and JSON shape are unchanged.
-- Steps 4–6 are not started.
+- Step 4 (frontend integration) is implemented.
+  - `apps/web/data/coastsnap-http-repository.ts` implements the existing
+    `CoastSnapRepository` over the API. It is selected per request by the
+    server-side `COASTSNAP_API_BASE_URL`; when that is unset, the sample
+    repository is used.
+  - Media URLs are pinned to one media origin (`COASTSNAP_MEDIA_ORIGIN`,
+    default: the API origin) and rendered `unoptimized`, so `next.config.ts`
+    is unchanged.
+  - Pages keep sample disclaimers and prototype download wording for sample
+    data only. `app/coastsnap/error.tsx` handles API failures.
+  - Details are in `apps/web/README.md`, "CoastSnap data source".
+- Steps 5–6 are not started.
 
 ## Objective
 

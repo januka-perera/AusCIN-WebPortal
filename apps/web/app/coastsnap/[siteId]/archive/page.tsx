@@ -4,7 +4,8 @@ import { notFound } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ObservationThumbnail } from "@/components/ui/observation-thumbnail";
-import { coastSnapRepository } from "@/data";
+import { coastSnapRepository, getCoastSnapDataSource } from "@/data";
+import { SAMPLE_RECORD_NOTICE, getRecordNotice } from "@/lib/coastsnap-presentation";
 import { formatLocalDateTime } from "@/lib/format";
 import { formatMediaTypeLabel } from "@/lib/observation-badge";
 import {
@@ -43,6 +44,8 @@ export default async function CoastSnapSiteArchivePage({
     notFound();
   }
 
+  const source = getCoastSnapDataSource();
+  const notice = getRecordNotice(source, site.isSynthetic);
   const filters = parseCoastSnapArchiveFilters(search);
   const activeFilters = hasActiveFilters(filters);
   const activeFilterCount = countActiveFilters(filters);
@@ -78,10 +81,13 @@ export default async function CoastSnapSiteArchivePage({
       <p className="mt-1 text-meta uppercase tracking-label text-muted">
         {site.region} &middot; Site ID {site.id}
       </p>
-      <p className="mt-2 text-meta text-muted">
-        Sample development record &mdash; not an operational AusCIN feed. Every photo below is a
-        synthetic fixture and every contributor credit is invented for interface testing.
-      </p>
+      {notice && (
+        <p className="mt-2 text-meta text-muted">
+          {notice}
+          {notice === SAMPLE_RECORD_NOTICE &&
+            " Every photo below is a synthetic fixture and every contributor credit is invented for interface testing."}
+        </p>
+      )}
 
       <details className="mt-10 border-t border-b border-border" open={activeFilters}>
         <summary className="cursor-pointer select-none py-4 text-small font-medium text-foreground">
@@ -150,7 +156,9 @@ export default async function CoastSnapSiteArchivePage({
           description={
             activeFilters
               ? "Try a different media type or date range, or clear the filters to see this site's whole record."
-              : "This site has no CoastSnap contributions in the sample dataset yet."
+              : source === "sample"
+                ? "This site has no CoastSnap contributions in the sample dataset yet."
+                : "No CoastSnap contributions have been published for this site yet."
           }
           action={
             activeFilters ? { label: "Clear filters", href: `/coastsnap/${site.id}/archive` } : undefined

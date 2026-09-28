@@ -6,6 +6,26 @@
       "runtimeExecutable": "cmd",
       "runtimeArgs": ["/c", "set PATH=C:\\Program Files\\nodejs;%PATH% && cd apps\\web && npm run dev"],
       "port": 3000
+    },
+    {
+      "name": "api (synthetic fixtures)",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": [
+        "-NoProfile",
+        "-Command",
+        "Set-Location apps/api; $env:COASTSNAP_SITE_REGISTRY_PATH='tests/fixtures/coastsnap/sites-registry.json'; $env:COASTSNAP_MANIFEST_PATH='tests/fixtures/coastsnap/manifest.json'; $env:COASTSNAP_DERIVATIVES_INDEX_PATH='tests/fixtures/coastsnap/derivatives-index.json'; $env:COASTSNAP_MEDIA_ROOT='.local-media'; $env:AUSCIN_MEDIA_BASE_URL='http://localhost:8000'; .venv/Scripts/python.exe -m uvicorn auscin_api.main:create_app --factory --port 8000"
+      ],
+      "port": 8000
+    },
+    {
+      "name": "web (CoastSnap API)",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": [
+        "-NoProfile",
+        "-Command",
+        "$env:PATH='C:\\Program Files\\nodejs;' + $env:PATH; $env:COASTSNAP_API_BASE_URL='http://localhost:8000'; Set-Location apps/web; npm run dev"
+      ],
+      "port": 3000
     }
   ]
 }

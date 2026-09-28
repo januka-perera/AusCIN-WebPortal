@@ -1,6 +1,7 @@
 import Image from "next/image";
 import type { ProcessingStatus, PublicationStatus } from "@/data";
 import { cn } from "@/lib/cn";
+import { isRemoteMediaUrl } from "@/lib/media-url";
 import { getObservationBadge } from "@/lib/observation-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusLabel } from "@/components/ui/status-label";
@@ -37,7 +38,14 @@ export function ObservationThumbnail({
   return (
     <div className={cn("relative overflow-hidden bg-border/40", aspectClassName)}>
       {item.thumbnailUrl ? (
-        <Image src={item.thumbnailUrl} alt={item.altText} fill sizes={sizes} className="object-cover" />
+        <Image
+          src={item.thumbnailUrl}
+          alt={item.altText}
+          fill
+          sizes={sizes}
+          unoptimized={isRemoteMediaUrl(item.thumbnailUrl)}
+          className="object-cover"
+        />
       ) : item.processingStatus === "processing" ? (
         <Skeleton className="absolute inset-0" />
       ) : (

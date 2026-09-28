@@ -5,7 +5,13 @@ import { notFound } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { MetadataList } from "@/components/ui/metadata-list";
 import { StatusLabel } from "@/components/ui/status-label";
-import { coastSnapRepository } from "@/data";
+import { coastSnapRepository, getCoastSnapDataSource } from "@/data";
+import {
+  describeUnavailableDownload,
+  getCoastSnapDownloadState,
+  getRecordNotice,
+  SAMPLE_RECORD_NOTICE,
+} from "@/lib/coastsnap-presentation";
 import {
   formatCoordinates,
   formatLocalDate,
@@ -13,6 +19,7 @@ import {
   formatUtcTimestamp,
 } from "@/lib/format";
 import { getPreviewAvailability, type PreviewAvailability } from "@/lib/media-access";
+import { isRemoteMediaUrl } from "@/lib/media-url";
 import { formatMediaTypeLabel, formatPublicationLabel } from "@/lib/observation-badge";
 import { getProcessingStatusTone, getPublicationStatusTone } from "@/lib/status-tone";
 
@@ -54,6 +61,14 @@ export default async function CoastSnapMediaDetailPage({
     notFound();
   }
 
+  const source = getCoastSnapDataSource();
+  const notice = getRecordNotice(source, observation.isSynthetic);
+  const downloadState = getCoastSnapDownloadState(source, observation);
+  const unavailableDownload =
+    downloadState === "available" || downloadState === "sample-demo"
+      ? null
+      : describeUnavailableDownload(source, downloadState);
+  // A browser-sized preview, falling back to the thumbnail. Never the original file.
   const previewSrc = observation.previewUrl ?? observation.thumbnailUrl;
   const previewAvailability = getPreviewAvailability(observation);
 
@@ -77,10 +92,13 @@ export default async function CoastSnapMediaDetailPage({
 
       <p className="mt-6 text-meta uppercase tracking-label text-accent">CoastSnap observation</p>
       <h1 className="mt-2 font-display text-display-md text-foreground">{observation.caption}</h1>
-      <p className="mt-2 text-meta text-muted">
-        Sample development record &mdash; not an operational AusCIN feed. This is synthetic
-        development imagery, not a real CoastSnap contribution.
-      </p>
+      {notice && (
+        <p className="mt-2 text-meta text-muted">
+          {notice}
+          {notice === SAMPLE_RECORD_NOTICE &&
+            " This is synthetic development imagery, not a real CoastSnap contribution."}
+        </p>
+      )}
 
       <div className="mt-8 grid gap-10 lg:grid-cols-[3fr_2fr] lg:items-start">
         <div>
@@ -91,6 +109,7 @@ export default async function CoastSnapMediaDetailPage({
                 alt={observation.altText}
                 fill
                 sizes="(min-width: 1024px) 60vw, 100vw"
+                unoptimized={isRemoteMediaUrl(previewSrc)}
                 className="object-cover"
               />
             ) : (
@@ -145,7 +164,14 @@ export default async function CoastSnapMediaDetailPage({
 
           <h2 className="mt-8 font-display text-heading-md text-foreground">Data access</h2>
           <div className="mt-3">
-            {observation.isOriginalAvailable && observation.originalUrl ? (
+            {downloadState === "available" && observation.originalUrl ? (
+              <>
+                <Button href={observation.originalUrl}>Download original</Button>
+                <p className="mt-2 max-w-sm text-small text-muted">
+                  The full-resolution photo file, with AusCIN provenance metadata embedded.
+                </p>
+              </>
+            ) : downloadState === "sample-demo" && observation.originalUrl ? (
               <>
                 <Button href={observation.originalUrl}>Download original (prototype demo)</Button>
                 <p className="mt-2 max-w-sm text-small text-muted">
@@ -154,14 +180,12 @@ export default async function CoastSnapMediaDetailPage({
                 </p>
               </>
             ) : (
-              <>
-                <StatusLabel label="Original unavailable" tone="neutral" />
-                <p className="mt-2 max-w-sm text-small text-muted">
-                  This development prototype does not mark this observation&apos;s original as
-                  available. Once real observations are ingested from Spotteron, availability here
-                  will follow the record&apos;s actual publication status.
-                </p>
-              </>
+              unavailableDownload && (
+                <>
+                  <StatusLabel label={unavailableDownload.label} tone="neutral" />
+                  <p className="mt-2 max-w-sm text-small text-muted">{unavailableDownload.description}</p>
+                </>
+              )
             )}
           </div>
 

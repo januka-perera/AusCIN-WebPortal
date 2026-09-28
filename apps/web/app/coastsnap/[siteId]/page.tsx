@@ -5,8 +5,10 @@ import { notFound } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { MetadataList } from "@/components/ui/metadata-list";
 import { StatusLabel } from "@/components/ui/status-label";
-import { coastSnapRepository } from "@/data";
+import { coastSnapRepository, getCoastSnapDataSource } from "@/data";
+import { getRecordNotice } from "@/lib/coastsnap-presentation";
 import { formatCoordinates, formatLocalDate, formatOperationalDate } from "@/lib/format";
+import { isRemoteMediaUrl } from "@/lib/media-url";
 import { getOperatingStatusTone } from "@/lib/status-tone";
 
 export async function generateMetadata({
@@ -27,10 +29,22 @@ export default async function CoastSnapSiteDetailPage({
     notFound();
   }
 
-  const [observations, dateRange] = await Promise.all([
-    coastSnapRepository.listObservationsForSite(site.id),
+  const source = getCoastSnapDataSource();
+  // One small page gives the count and recent observations, without loading the
+  // site's whole archive (which may be large once it's API-backed).
+  const [{ total: observationCount, items: recent }, dateRange] = await Promise.all([
+    coastSnapRepository.listObservationsForSitePaginated(site.id, {}, { page: 1, pageSize: 12 }),
     coastSnapRepository.getObservationDateRange(site.id),
   ]);
+  // API sites have no representative image yet, so the newest observation that has a
+  // rendition stands in, preferring its preview (browser-sized, never the original)
+  // and using its own alt text.
+  const latest = recent.find((item) => item.previewUrl) ?? recent.find((item) => item.thumbnailUrl);
+  const heroSrc = site.representativeImageUrl ?? latest?.previewUrl ?? latest?.thumbnailUrl ?? null;
+  const heroAlt = site.representativeImageUrl
+    ? `Representative ${site.isSynthetic ? "sample " : ""}image for ${site.name}, a CoastSnap community photo-monitoring point in ${site.region}`
+    : latest?.altText ?? "";
+  const notice = getRecordNotice(source, site.isSynthetic);
 
   const siteMetadata = [
     { label: "Site ID", value: site.id },
@@ -45,7 +59,7 @@ export default async function CoastSnapSiteDetailPage({
         ? `${formatLocalDate(dateRange.earliest.capturedAtUtc, dateRange.earliest.displayTimeZone)} – ${formatLocalDate(dateRange.latest.capturedAtUtc, dateRange.latest.displayTimeZone)}`
         : "No observations recorded yet",
     },
-    { label: "Observations", value: String(observations.length) },
+    { label: "Observations", value: String(observationCount) },
   ];
 
   return (
@@ -65,17 +79,15 @@ export default async function CoastSnapSiteDetailPage({
               Site ID &middot; {site.id}
             </span>
           </div>
-          <p className="mt-2 text-meta text-muted">
-            Sample development record &mdash; not an operational AusCIN feed.
-          </p>
+          {notice && <p className="mt-2 text-meta text-muted">{notice}</p>}
 
           <p className="mt-6 max-w-xl text-body text-muted">
-            {observations.length === 0
+            {observationCount === 0
               ? `${site.description} No observations have been recorded for this site yet.`
-              : `${site.description} Its ${observations.length} observation${
-                  observations.length === 1 ? "" : "s"
-                } in the sample dataset ${
-                  observations.length === 1 ? "comes" : "come"
+              : `${site.description} Its ${observationCount} observation${
+                  observationCount === 1 ? "" : "s"
+                }${source === "sample" ? " in the sample dataset" : ""} ${
+                  observationCount === 1 ? "comes" : "come"
                 } from the CoastSnap community, not from a fixed AusCIN camera.`}
           </p>
 
@@ -88,19 +100,20 @@ export default async function CoastSnapSiteDetailPage({
         </div>
 
         <div>
-          {site.representativeImageUrl ? (
+          {heroSrc ? (
             <div className="relative aspect-video overflow-hidden bg-border/40">
               <Image
-                src={site.representativeImageUrl}
-                alt={`Representative sample image for ${site.name}, a CoastSnap community photo-monitoring point in ${site.region}`}
+                src={heroSrc}
+                alt={heroAlt}
                 fill
                 sizes="(min-width: 1024px) 40vw, 100vw"
+                unoptimized={isRemoteMediaUrl(heroSrc)}
                 className="object-cover"
               />
             </div>
           ) : (
             <div className="flex aspect-video items-center justify-center border border-dashed border-border text-small text-muted">
-              Image unavailable
+              {observationCount === 0 ? "No observations yet" : "Image unavailable"}
             </div>
           )}
         </div>
@@ -115,14 +128,23 @@ export default async function CoastSnapSiteDetailPage({
 
       <section className="mt-16 border-t border-border pt-10">
         <h2 className="font-display text-heading-md text-foreground">Data access</h2>
-        <p className="mt-3 max-w-xl text-small text-muted">
-          Original CoastSnap photo downloads are not implemented in this prototype. A single
-          observation in the archive is marked as having a download available, using a local
-          placeholder file, purely to demonstrate that interface state &mdash; it is not a real
-          photo. Once real observations are ingested from Spotteron, downloads here are intended
-          to follow the same publication-status rules already used across the rest of the
-          archive: public, embargoed, project-only or restricted.
-        </p>
+        {source === "sample" ? (
+          <p className="mt-3 max-w-xl text-small text-muted">
+            Original CoastSnap photo downloads are not implemented in this prototype. A single
+            observation in the archive is marked as having a download available, using a local
+            placeholder file, purely to demonstrate that interface state &mdash; it is not a real
+            photo. Once real observations are ingested from Spotteron, downloads here are intended
+            to follow the same publication-status rules already used across the rest of the
+            archive: public, embargoed, project-only or restricted.
+          </p>
+        ) : (
+          <p className="mt-3 max-w-xl text-small text-muted">
+            Each observation&apos;s page offers the original photo file for download where this
+            site&apos;s publication policy permits it. Gallery and detail views use smaller
+            renditions; the original is only transferred when you choose{" "}
+            <span className="font-medium text-foreground">Download original</span>.
+          </p>
+        )}
       </section>
     </div>
   );

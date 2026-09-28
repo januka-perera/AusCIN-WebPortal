@@ -20,6 +20,72 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## CoastSnap data source
+
+The `/coastsnap` pages read through one interface, `CoastSnapRepository`
+(`data/coastsnap-repository.ts`). The implementation is chosen per request
+from the server-side environment:
+
+| `COASTSNAP_API_BASE_URL` | Data source |
+|---|---|
+| unset or blank (default) | The built-in synthetic sample repository. No API needed. Unit tests always use this. |
+| set, e.g. `http://localhost:8000` | The AusCIN catalogue API (`apps/api`), via `data/coastsnap-http-repository.ts` |
+
+Both variables are server-side only (never `NEXT_PUBLIC_`). See `.env.example`.
+
+**Media URLs.** Thumbnails, previews and original downloads are loaded by the
+browser directly from the API's `/media/coastsnap/...` endpoints. Every media
+URL is resolved against one explicit, browser-reachable media origin:
+`COASTSNAP_MEDIA_ORIGIN`, defaulting to the origin of `COASTSNAP_API_BASE_URL`.
+
+- A root-relative URL from the API is resolved against that origin, never
+  the Next.js origin at `localhost:3000`.
+- An absolute URL on any other origin, or any path other than
+  `/media/coastsnap/<this record's media id>/<kind>`, is dropped. The page
+  then shows its normal "unavailable" state.
+
+For local development, start the API with `AUSCIN_MEDIA_BASE_URL` set to the
+same origin, so it returns absolute URLs that already match. Set
+`COASTSNAP_MEDIA_ORIGIN` only when the server reaches the API on an internal
+address that browsers can't use.
+
+**Images.** API media is rendered with `next/image`'s `unoptimized` prop, so
+`next.config.ts` needs no `remotePatterns` entry:
+
+- the API already serves pre-sized derivatives (thumbnails ≤ 400 px, previews
+  ≤ 1600 px)
+- Next 16 refuses to optimize images from loopback and private IPs unless
+  `dangerouslyAllowLocalIP` is enabled, which carries SSRF risk
+
+**Rendering and failures.**
+
+- All `/coastsnap` routes render at request time, and the HTTP repository
+  uses `cache: "no-store"`, so `next build` never contacts the API.
+- API 404s become normal "not found" pages.
+- Network failures, timeouts, other HTTP errors and malformed responses show
+  the `app/coastsnap/error.tsx` "catalogue unavailable" state, with a retry
+  action.
+
+Local run against the synthetic API (two terminals):
+
+```powershell
+# apps/api — generate synthetic media once, then start the fixture-backed API
+.\.venv\Scripts\python.exe tests\fixtures\synthetic_media.py .local-media
+$env:COASTSNAP_SITE_REGISTRY_PATH = "tests/fixtures/coastsnap/sites-registry.json"
+$env:COASTSNAP_MANIFEST_PATH = "tests/fixtures/coastsnap/manifest.json"
+$env:COASTSNAP_DERIVATIVES_INDEX_PATH = "tests/fixtures/coastsnap/derivatives-index.json"
+$env:COASTSNAP_MEDIA_ROOT = ".local-media"
+$env:AUSCIN_MEDIA_BASE_URL = "http://localhost:8000"
+.\.venv\Scripts\python.exe -m uvicorn auscin_api.main:create_app --factory --port 8000
+
+# apps/web
+$env:COASTSNAP_API_BASE_URL = "http://localhost:8000"
+npm run dev
+```
+
+The same two servers are available as the `api (synthetic fixtures)` and
+`web (CoastSnap API)` configurations in `.claude/launch.json`.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
