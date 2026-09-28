@@ -204,8 +204,11 @@ In `coastsnap-site.env`:
   COASTSNAP_DERIVATIVES_INDEX_PATH=/home/<NECTAR_USER>/auscin-derivatives/derivatives-index.json
   ```
 
-- For this first session, set **`COASTSNAP_SITE_PUBLICATION_STATUS=embargoed`**
-  and **`COASTSNAP_SITE_DOWNLOAD_PERMITTED=false`**.
+- For this first session, set **`COASTSNAP_SITE_PUBLICATION_STATUS=embargoed`**,
+  **`COASTSNAP_SITE_LEVEL0_DOWNLOAD_PERMITTED=false`** and
+  **`COASTSNAP_SITE_LEVEL1_DOWNLOAD_PERMITTED=false`**. The retired single
+  `COASTSNAP_SITE_DOWNLOAD_PERMITTED` is refused by the validator, so don't
+  add it.
 - Set `NCI_PUBLICATION_ROOT=` (empty) for now. It isn't needed until the
   transfer step, and the validator only requires it with `--for-transfer`.
   Don't leave the literal `<NCI_PUBLICATION_ROOT>` line in the file:

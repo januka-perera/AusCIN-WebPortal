@@ -194,11 +194,28 @@ def test_derivatives_index_with_unexpected_field_is_rejected(derivatives_data, w
         load_catalogue(REGISTRY_PATH, MANIFEST_PATH, write_json("derivatives.json", data))
 
 
-def test_level1_checksum_must_be_sha256(manifest_data, write_json):
+@pytest.mark.parametrize("level", ["level0", "level1"])
+def test_each_level_checksum_must_be_sha256(manifest_data, write_json, level):
     data = copy.deepcopy(manifest_data)
-    data["entries"][0]["level1"]["checksum"]["sha256"] = "not-a-checksum"
-    with pytest.raises(CatalogueError, match="SHA-256"):
+    data["entries"][0][level]["checksum"]["sha256"] = "not-a-checksum"
+    with pytest.raises(CatalogueError, match=f"{level} checksum is not a SHA-256"):
         load_catalogue(REGISTRY_PATH, write_json("manifest.json", data))
+
+
+def test_registry_with_retired_single_download_flag_is_rejected(registry_data, write_json):
+    data = copy.deepcopy(registry_data)
+    data["sites"][0]["original_download_permitted"] = True
+    with pytest.raises(CatalogueError, match="Invalid site registry"):
+        load_catalogue(write_json("registry.json", data), MANIFEST_PATH)
+
+
+def test_download_levels_default_to_not_permitted(registry_data, write_json):
+    data = copy.deepcopy(registry_data)
+    del data["sites"][0]["level0_download_permitted"]
+    del data["sites"][0]["level1_download_permitted"]
+    catalogue = load_catalogue(write_json("registry.json", data), MANIFEST_PATH, media_enabled=True)
+    media = catalogue.get_media(build_media_id(PUBLIC_SITE_ID, "TEST_OBS_0001")).media
+    assert media.level0.download_permitted is False and media.level1.download_permitted is False
 
 
 def test_catalogue_retains_trusted_internal_media_metadata():
@@ -206,15 +223,18 @@ def test_catalogue_retains_trusted_internal_media_metadata():
     first = catalogue.get_media(build_media_id(PUBLIC_SITE_ID, "TEST_OBS_0001"))
     assert first is not None
     media = first.media
-    assert media.level1_relative_path == "level-1/root-TEST_ROOT_ID/2026/08/01/images/TEST_OBS_0001.jpg"
-    assert media.level1_content_type == "image/jpeg"
-    assert media.level1_file_size > 0
-    assert len(media.level1_sha256) == 64
+    for level, product in (("level-0", media.level0), ("level-1", media.level1)):
+        assert product.relative_path == f"{level}/root-TEST_ROOT_ID/2026/08/01/images/TEST_OBS_0001.jpg"
+        assert product.content_type == "image/jpeg"
+        assert product.file_size > 0
+        assert len(product.sha256) == 64
+        assert product.download_permitted is True
+        assert product.download_offered is True
+    assert media.level0.sha256 != media.level1.sha256
     assert (media.width, media.height) == (8, 6)
     assert media.thumbnail.relative_path == "derivatives/thumbnails/root-TEST_ROOT_ID/2026/08/01/TEST_OBS_0001.jpg"
     assert media.preview.relative_path == "derivatives/previews/root-TEST_ROOT_ID/2026/08/01/TEST_OBS_0001.jpg"
     assert len(media.thumbnail.sha256) == 64 and media.thumbnail.file_size_bytes > 0
-    assert media.original_download_permitted is True
 
     fifth = catalogue.get_media(build_media_id(PUBLIC_SITE_ID, "TEST_OBS_0005"))
     assert fifth.media.thumbnail is None and fifth.media.width is None

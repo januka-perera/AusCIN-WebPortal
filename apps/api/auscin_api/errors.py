@@ -39,8 +39,16 @@ def rendition_not_available(kind: str) -> NotFoundError:
     return NotFoundError(f"{kind}_not_available", f"No {kind} is available for this observation.")
 
 
-def download_not_permitted() -> ApiError:
-    return ApiError(403, "download_not_permitted", "Downloading the original file is not permitted for this observation.")
+_LEVEL_LABELS = {
+    "level0": "the untouched source image (Level 0)",
+    "level1": "the provenance copy (Level 1)",
+}
+
+
+def download_not_permitted(level: str) -> ApiError:
+    return ApiError(
+        403, "download_not_permitted", f"Downloading {_LEVEL_LABELS[level]} is not permitted for this observation."
+    )
 
 
 def media_unavailable() -> ApiError:

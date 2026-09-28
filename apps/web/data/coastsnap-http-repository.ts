@@ -84,7 +84,9 @@ const OPERATING_STATUSES: readonly OperatingStatus[] = ["active", "offline", "ma
 const MEDIA_TYPES: readonly MediaType[] = ["image", "composite", "timelapse"];
 const PROCESSING_STATUSES: readonly ProcessingStatus[] = ["processed", "processing", "failed"];
 const PUBLICATION_STATUSES: readonly PublicationStatus[] = ["public", "embargoed", "project-only", "restricted"];
-type MediaKind = "thumbnail" | "preview" | "original";
+type MediaKind = "thumbnail" | "preview" | "level0" | "level1";
+
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 
 // --- URL handling ----------------------------------------------------------------
 
@@ -231,7 +233,8 @@ export function mapObservation(value: unknown, path: string, mediaOrigin: string
   };
   if (obj.sourcePlatform !== "spotteron") throw invalid(path, `"sourcePlatform" has an unexpected value`);
 
-  const originalUrl = normalizeMediaUrl(obj.originalUrl, mediaOrigin, mediaId, "original");
+  const level0 = mapDownloadLevel(obj, "level0", path, mediaOrigin, mediaId);
+  const level1 = mapDownloadLevel(obj, "level1", path, mediaOrigin, mediaId);
   const observation: CoastSnapObservation = {
     id: safeId(obj, "id", path),
     siteId: safeId(obj, "siteId", path),
@@ -245,13 +248,20 @@ export function mapObservation(value: unknown, path: string, mediaOrigin: string
     publicationStatus: oneOf(obj, "publicationStatus", PUBLICATION_STATUSES, path),
     thumbnailUrl: normalizeMediaUrl(obj.thumbnailUrl, mediaOrigin, mediaId, "thumbnail"),
     previewUrl: normalizeMediaUrl(obj.previewUrl, mediaOrigin, mediaId, "preview"),
-    // A download is offered only when the API says so AND the URL is safe. Either on its own is not enough.
-    isOriginalAvailable: bool(obj, "isOriginalAvailable", path) && originalUrl !== null,
-    originalUrl,
+    level0DownloadAvailable: level0.available,
+    level0DownloadUrl: level0.url,
+    level1DownloadAvailable: level1.available,
+    level1DownloadUrl: level1.url,
+    // Deprecated fields, derived from the validated Level 1 values rather than
+    // trusted separately from the API's own deprecated fields.
+    isOriginalAvailable: level1.available,
+    originalUrl: level1.url,
     caption: str(obj, "caption", path),
     altText: str(obj, "altText", path),
     isSynthetic: bool(obj, "isSynthetic", path),
   };
+  if (level0.checksum) observation.level0ChecksumSha256 = level0.checksum;
+  if (level1.checksum) observation.level1ChecksumSha256 = level1.checksum;
   const width = optionalDimension(obj, "width", path);
   const height = optionalDimension(obj, "height", path);
   if (width !== undefined && height !== undefined) {
@@ -259,6 +269,28 @@ export function mapObservation(value: unknown, path: string, mediaOrigin: string
     observation.height = height;
   }
   return observation;
+}
+
+/**
+ * One product level's download fields. A level counts as downloadable only when
+ * the API says it's available AND its URL passes origin/path validation. The
+ * published checksum is kept only for a downloadable level, and must be a
+ * lowercase SHA-256 hex digest.
+ */
+function mapDownloadLevel(
+  obj: Json,
+  level: "level0" | "level1",
+  path: string,
+  mediaOrigin: string,
+  mediaId: string,
+): { available: boolean; url: string | null; checksum?: string } {
+  const url = normalizeMediaUrl(obj[`${level}DownloadUrl`], mediaOrigin, mediaId, level);
+  const available = bool(obj, `${level}DownloadAvailable`, path) && url !== null;
+  const checksum = obj[`${level}ChecksumSha256`];
+  if (checksum !== null && checksum !== undefined && (typeof checksum !== "string" || !SHA256_PATTERN.test(checksum))) {
+    throw invalid(path, `"${level}ChecksumSha256" is not a SHA-256 hex digest`);
+  }
+  return { available, url: available ? url : null, checksum: available && checksum ? (checksum as string) : undefined };
 }
 
 function mapPage(value: unknown, path: string, mediaOrigin: string): PaginatedResult<CoastSnapObservation> {

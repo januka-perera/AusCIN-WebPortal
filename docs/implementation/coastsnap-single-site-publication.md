@@ -10,11 +10,19 @@ Status: **in progress.** Date: 2026-09-28.
   - The date-range endpoint returns `null`s, not 404, for a public site with
     no observations.
   - Unmatched routes also return the controlled error shape.
-- Step 2 (local media delivery) is implemented: a `LocalMediaStore`, the
-  `/media/coastsnap/{media_id}/original|preview|thumbnail` endpoints, and a
-  per-site `original_download_permitted` registry flag.
-  - `original` serves Level 1. This is **provisional** until the Level 0 vs
-    Level 1 decision is made.
+- Step 2 (local media delivery) is implemented: a `LocalMediaStore`, and the
+  `/media/coastsnap/{media_id}/level0|level1|preview|thumbnail` endpoints.
+  - **Downloads are split by product level**, which resolves the open
+    "Level 0 vs Level 1" question by offering both explicitly:
+    - `/level0` serves the untouched source image.
+    - `/level1` serves the AusCIN provenance copy.
+  - Each level has its own registry permission (`level0_download_permitted`,
+    `level1_download_permitted`, both defaulting to `false`), its own ETag,
+    an opaque `<media_id>_<level>` filename, and a published checksum
+    (returned only when that level is downloadable).
+  - `/original` and the `isOriginalAvailable` / `originalUrl` fields are kept
+    temporarily as **deprecated** aliases for Level 1. The frontend uses only
+    the per-level fields.
   - Derivatives come from a provisional derivatives index until worker step 3
     exists.
   - HTTP Range requests are supported natively by Starlette's `FileResponse`.
@@ -41,8 +49,9 @@ Status: **in progress.** Date: 2026-09-28.
 - Step 5 (local end-to-end with synthetic data) is implemented.
   `scripts/coastsnap_e2e_smoke.py` runs the whole chain: worker manifest →
   real derivatives command (run twice, reuse checked) → FastAPI → `next start`
-  → preview → original download with checksum verification, plus a
-  downloads-restricted pass. It works in a temporary directory outside the
+  → preview → Level 0 and Level 1 downloads, each verified against its own
+  manifest checksum, plus a pass with Level 0 withheld and Level 1
+  permitted. It works in a temporary directory outside the
   repository and removes it afterwards.
   - The API now returns trusted `width`/`height` from the derivatives index.
   - The footer wording follows the data source.
@@ -329,7 +338,10 @@ station/camera pages, the `CoastSnapRepository` interface.
 
 ## Open questions / assumptions
 
-- **Download product:** Level 1 (proposed) or Level 0?
+- **Download product:** resolved technically. Both levels are offered
+  explicitly, each behind its own registry permission. Which levels the real
+  test site permits (Level 0, Level 1, both or neither) is still a
+  licence/policy decision for the project owner.
 - **Licence and attribution** text for the test site, and whether contributor
   names may be shown at all.
 - **Spotteron source timezone** is still assumed UTC; displayed capture times

@@ -298,6 +298,19 @@ sha256sum "$HOME/auscin-staging/level-0/root-<root-id>/<yyyy>/<mm>/<dd>/images/<
 sha256sum "$HOME/auscin-staging/level-1/root-<root-id>/<yyyy>/<mm>/<dd>/images/<id>.jpg"
 ```
 
+Both products are published separately by the catalogue API (`apps/api`):
+
+- Level 0 at `/media/coastsnap/<media-id>/level0`, as the untouched source
+  image.
+- Level 1 at `/media/coastsnap/<media-id>/level1`, as the AusCIN provenance
+  copy.
+
+Each is served only if the site registry permits that level
+(`level0_download_permitted` / `level1_download_permitted`, both defaulting
+to false). Each uses its manifest checksum here as its ETag and published
+SHA-256. That's why the manifest records a separate checksum per level, and
+why both files must stay byte-exact after import.
+
 ### Embedded XMP metadata (Level 1 only)
 
 Use `-a -G1 -s` (list every tag, grouped by family, short names) rather

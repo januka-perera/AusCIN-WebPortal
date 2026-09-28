@@ -10,6 +10,11 @@ import type { CoastSnapObservation } from "../types/coastsnap";
  * only to exercise that UI state — every other record leaves
  * isOriginalAvailable false and originalUrl null, since this prototype
  * does not serve real production downloads.
+ *
+ * The per-level download fields (Level 0 / Level 1) are false/null for
+ * every sample record: sample data never offers real product-level
+ * downloads. The demo keeps using the deprecated single-original fields,
+ * so it can't be mistaken for a real Level 0 or Level 1 file.
  */
 export const COASTSNAP_OBSERVATIONS: CoastSnapObservation[] = [
   {
@@ -29,6 +34,10 @@ export const COASTSNAP_OBSERVATIONS: CoastSnapObservation[] = [
     previewUrl: "/sample-media/previews/beach-wide.svg",
     isOriginalAvailable: false,
     originalUrl: null,
+    level0DownloadAvailable: false,
+    level0DownloadUrl: null,
+    level1DownloadAvailable: false,
+    level1DownloadUrl: null,
     caption: "Driftwood Bay — morning shoreline, contributed 1 August 2026",
     altText: "Wide view of Driftwood Bay's shoreline, photographed from the CoastSnap alignment mark.",
     isSynthetic: true,
@@ -51,6 +60,10 @@ export const COASTSNAP_OBSERVATIONS: CoastSnapObservation[] = [
     publicationStatus: "public",
     isOriginalAvailable: false,
     originalUrl: null,
+    level0DownloadAvailable: false,
+    level0DownloadUrl: null,
+    level1DownloadAvailable: false,
+    level1DownloadUrl: null,
     caption: "Driftwood Bay — midday shoreline, contributed 1 August 2026 (preview unavailable)",
     altText: "Shoreline view of Driftwood Bay; a full preview could not be generated for this capture.",
     isSynthetic: true,
@@ -72,6 +85,10 @@ export const COASTSNAP_OBSERVATIONS: CoastSnapObservation[] = [
     previewUrl: "/sample-media/previews/beach-wide.svg",
     isOriginalAvailable: false,
     originalUrl: null,
+    level0DownloadAvailable: false,
+    level0DownloadUrl: null,
+    level1DownloadAvailable: false,
+    level1DownloadUrl: null,
     caption: "Driftwood Bay — shoreline, contributed 5 August 2026",
     altText: "Wide view of Driftwood Bay's shoreline, photographed from the CoastSnap alignment mark.",
     isSynthetic: true,
@@ -92,6 +109,10 @@ export const COASTSNAP_OBSERVATIONS: CoastSnapObservation[] = [
     previewUrl: null,
     isOriginalAvailable: false,
     originalUrl: null,
+    level0DownloadAvailable: false,
+    level0DownloadUrl: null,
+    level1DownloadAvailable: false,
+    level1DownloadUrl: null,
     caption: "Driftwood Bay — capture from 10 August 2026 is still processing",
     altText: "This CoastSnap contribution is still processing; no preview is available yet.",
     isSynthetic: true,
@@ -114,6 +135,10 @@ export const COASTSNAP_OBSERVATIONS: CoastSnapObservation[] = [
     previewUrl: "/sample-media/previews/beach-wide.svg",
     isOriginalAvailable: false,
     originalUrl: null,
+    level0DownloadAvailable: false,
+    level0DownloadUrl: null,
+    level1DownloadAvailable: false,
+    level1DownloadUrl: null,
     caption: "Driftwood Bay — stacked high-tide composite, contributed 15 August 2026",
     altText: "A stacked composite of Driftwood Bay's shoreline at high tide.",
     isSynthetic: true,
@@ -141,6 +166,10 @@ export const COASTSNAP_OBSERVATIONS: CoastSnapObservation[] = [
     // real production file.
     isOriginalAvailable: true,
     originalUrl: "/sample-media/previews/beach-wide.svg",
+    level0DownloadAvailable: false,
+    level0DownloadUrl: null,
+    level1DownloadAvailable: false,
+    level1DownloadUrl: null,
     caption: "Driftwood Bay — shoreline, contributed 18 August 2026 (prototype download demo)",
     altText: "Wide view of Driftwood Bay's shoreline, used to demonstrate the download-available UI state.",
     isSynthetic: true,

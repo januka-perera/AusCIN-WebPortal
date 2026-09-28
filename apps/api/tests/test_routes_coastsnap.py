@@ -155,7 +155,11 @@ def test_observation_shape_matches_frontend_contract(client):
     assert set(item) == {
         "id", "siteId", "sourcePlatform", "mediaId", "mediaType", "capturedAtUtc", "capturedAtSourceRaw",
         "width", "height", "ingestedAtUtc", "displayTimeZone", "contributor", "processingStatus", "publicationStatus",
-        "thumbnailUrl", "previewUrl", "isOriginalAvailable", "originalUrl", "caption", "altText", "isSynthetic",
+        "thumbnailUrl", "previewUrl",
+        "level0DownloadUrl", "level1DownloadUrl", "level0DownloadAvailable", "level1DownloadAvailable",
+        "level0ChecksumSha256", "level1ChecksumSha256",
+        "isOriginalAvailable", "originalUrl",  # deprecated, mirror Level 1
+        "caption", "altText", "isSynthetic",
     }
     assert item["id"] == item["mediaId"] == media_id("TEST_OBS_0003")
     assert item["siteId"] == PUBLIC_SITE_ID
@@ -165,8 +169,14 @@ def test_observation_shape_matches_frontend_contract(client):
     mid = media_id("TEST_OBS_0003")
     assert item["thumbnailUrl"] == f"/media/coastsnap/{mid}/thumbnail"
     assert item["previewUrl"] == f"/media/coastsnap/{mid}/preview"
+    assert item["level0DownloadAvailable"] is True and item["level1DownloadAvailable"] is True
+    assert item["level0DownloadUrl"] == f"/media/coastsnap/{mid}/level0"
+    assert item["level1DownloadUrl"] == f"/media/coastsnap/{mid}/level1"
+    assert len(item["level0ChecksumSha256"]) == 64 and len(item["level1ChecksumSha256"]) == 64
+    assert item["level0ChecksumSha256"] != item["level1ChecksumSha256"]
+    # Deprecated compatibility fields mirror Level 1.
     assert item["isOriginalAvailable"] is True
-    assert item["originalUrl"] == f"/media/coastsnap/{mid}/original"
+    assert item["originalUrl"] == item["level1DownloadUrl"]
     assert item["contributor"] == {
         "displayName": "CoastSnap contributor",
         "attributionText": "CoastSnap community photo (synthetic test data)",

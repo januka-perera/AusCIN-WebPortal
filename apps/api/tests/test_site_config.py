@@ -49,7 +49,8 @@ def synthetic_config(base: Path) -> dict[str, str]:
         "COASTSNAP_SITE_ESTABLISHED_SINCE": "2025-01-15",
         "COASTSNAP_SITE_ATTRIBUTION_TEXT": "CoastSnap community photo (synthetic)",
         "COASTSNAP_SITE_PUBLICATION_STATUS": "embargoed",
-        "COASTSNAP_SITE_DOWNLOAD_PERMITTED": "false",
+        "COASTSNAP_SITE_LEVEL0_DOWNLOAD_PERMITTED": "false",
+        "COASTSNAP_SITE_LEVEL1_DOWNLOAD_PERMITTED": "false",
         "COASTSNAP_STAGING_DIR": str(staging),
         "COASTSNAP_DERIVATIVES_ROOT": str(derivatives),
         "COASTSNAP_MANIFEST_PATH": str(staging / "manifests" / "TEST_ROOT_ID.json"),
@@ -94,11 +95,43 @@ def test_registry_is_built_from_explicit_values_only(config):
     assert site.site_id == "CS-SYNTHETIC-BEACH"
     assert site.spotteron_root_id == "TEST_ROOT_ID"
     assert site.publication_status == "embargoed"
-    assert site.original_download_permitted is False
+    assert site.level0_download_permitted is False
+    assert site.level1_download_permitted is False
     assert site.is_synthetic is False
-    permitted = build_registry({**config, "COASTSNAP_SITE_PUBLICATION_STATUS": "public", "COASTSNAP_SITE_DOWNLOAD_PERMITTED": "true"})
-    assert permitted.sites[0].publication_status == "public"
-    assert permitted.sites[0].original_download_permitted is True
+    both = build_registry({
+        **config,
+        "COASTSNAP_SITE_PUBLICATION_STATUS": "public",
+        "COASTSNAP_SITE_LEVEL0_DOWNLOAD_PERMITTED": "true",
+        "COASTSNAP_SITE_LEVEL1_DOWNLOAD_PERMITTED": "true",
+    })
+    assert both.sites[0].publication_status == "public"
+    assert (both.sites[0].level0_download_permitted, both.sites[0].level1_download_permitted) == (True, True)
+
+
+@pytest.mark.parametrize(("level0", "level1"), [("true", "false"), ("false", "true")])
+def test_each_level_permission_is_independent(config, level0, level1):
+    registry = build_registry({
+        **config,
+        "COASTSNAP_SITE_LEVEL0_DOWNLOAD_PERMITTED": level0,
+        "COASTSNAP_SITE_LEVEL1_DOWNLOAD_PERMITTED": level1,
+    })
+    site = registry.sites[0]
+    assert (site.level0_download_permitted, site.level1_download_permitted) == (level0 == "true", level1 == "true")
+
+
+def test_retired_single_download_permission_is_refused(config, repo):
+    config["COASTSNAP_SITE_DOWNLOAD_PERMITTED"] = "true"
+    report = validate(config, repo)
+    assert not report.ok
+    assert any("LEVEL0_DOWNLOAD_PERMITTED" in m and "LEVEL1_DOWNLOAD_PERMITTED" in m
+               for m in report.errors["COASTSNAP_SITE_DOWNLOAD_PERMITTED"])
+
+
+def test_retired_single_download_permission_is_reported_by_the_cli(outside_repo):
+    config = {**synthetic_config(outside_repo), "COASTSNAP_SITE_DOWNLOAD_PERMITTED": "true"}
+    out = io.StringIO()
+    assert main(["validate"], environ=config, out=out) == 1
+    assert "[FAIL] COASTSNAP_SITE_DOWNLOAD_PERMITTED has been replaced" in out.getvalue()
 
 
 # --- Missing and placeholder values -----------------------------------------------------------
@@ -230,10 +263,11 @@ def test_invalid_publication_status_is_refused(config, repo, status):
     assert "COASTSNAP_SITE_PUBLICATION_STATUS" in validate(config, repo).errors
 
 
+@pytest.mark.parametrize("name", ["COASTSNAP_SITE_LEVEL0_DOWNLOAD_PERMITTED", "COASTSNAP_SITE_LEVEL1_DOWNLOAD_PERMITTED"])
 @pytest.mark.parametrize("value", ["yes", "1", "True", "TRUE", "on"])
-def test_download_permission_must_be_an_explicit_true_or_false(config, repo, value):
-    config["COASTSNAP_SITE_DOWNLOAD_PERMITTED"] = value
-    assert "COASTSNAP_SITE_DOWNLOAD_PERMITTED" in validate(config, repo).errors
+def test_each_level_permission_must_be_an_explicit_true_or_false(config, repo, name, value):
+    config[name] = value
+    assert name in validate(config, repo).errors
 
 
 def test_short_description_is_refused(config, repo):
@@ -369,7 +403,8 @@ def test_cli_write_registry_writes_the_reviewed_entry(outside_repo):
     registry = SiteRegistry.model_validate(json.loads(output.read_text(encoding="utf-8")))
     assert registry.sites[0].site_id == "CS-SYNTHETIC-BEACH"
     assert "publication_status          = embargoed" in out.getvalue()
-    assert "original_download_permitted = false" in out.getvalue()
+    assert "level0_download_permitted   = false" in out.getvalue()
+    assert "level1_download_permitted   = false" in out.getvalue()
 
 
 def test_cli_write_registry_refuses_invalid_config_and_writes_nothing(outside_repo):

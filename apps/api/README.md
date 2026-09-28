@@ -103,19 +103,24 @@ Invalid values return 422.
 
 | Path | Serves | Notes |
 |---|---|---|
-| `/media/coastsnap/{media_id}/original` | The **Level 1** file | `Content-Disposition: attachment; filename="<media_id>.<ext>"`, the correct `Content-Type`, `ETag` = catalogue SHA-256, HTTP Range requests supported |
+| `/media/coastsnap/{media_id}/level0` | **Level 0**: the untouched source image, exactly as downloaded from Spotteron | `Content-Disposition: attachment; filename="<media_id>_level0.<ext>"`, the correct `Content-Type`, `ETag` = the Level 0 manifest SHA-256, HTTP Range requests supported |
+| `/media/coastsnap/{media_id}/level1` | **Level 1**: the AusCIN provenance copy (Level 0's image bytes plus embedded provenance XMP) | The same, with `filename="<media_id>_level1.<ext>"` and `ETag` = the Level 1 manifest SHA-256 |
+| `/media/coastsnap/{media_id}/original` | **Deprecated** alias for `/level1` | The identical Level 1 response, plus `Deprecation: true` and `Link: </media/coastsnap/{media_id}/level1>; rel="successor-version"`. It is marked `deprecated` in OpenAPI. Kept temporarily for compatibility; new clients must use `/level0` or `/level1`. |
 | `/media/coastsnap/{media_id}/preview` | Browser-sized preview JPEG (≤ 1600 px) | Served inline, `ETag` = index SHA-256 |
 | `/media/coastsnap/{media_id}/thumbnail` | Thumbnail JPEG (≤ 400 px) | Served inline, `ETag` = index SHA-256 |
+
+HEAD is served for every media path but is omitted from the OpenAPI schema,
+so each operation ID stays unique.
 
 Media responses and errors:
 
 | Status | `code` | When |
 |---|---|---|
 | 200 / 206 | — | File served, fully (200) or as a byte range (206) |
-| 403 | `download_not_permitted` | The registry doesn't permit original downloads for the site |
+| 403 | `download_not_permitted` | The registry doesn't permit downloads of **that level** for the site. The message names the level. |
 | 404 | `media_not_found` | Unknown media ID, an ID minted for another site, a non-public site, or an incomplete manifest entry |
-| 404 | `preview_not_available` / `thumbnail_not_available` | No such rendition in the derivatives index, or the index entry is stale (see below). **There is never a fallback to the original.** |
-| 404 | `original_not_available` | The Level 1 file type isn't one the API serves (JPEG, PNG or WebP) |
+| 404 | `preview_not_available` / `thumbnail_not_available` | No such rendition in the derivatives index, or the index entry is stale (see below). **There is never a fallback to Level 0 or Level 1.** |
+| 404 | `level0_not_available` / `level1_not_available` | That level's file type isn't one the API serves (JPEG, PNG or WebP) |
 | 416 | — | Unsatisfiable range |
 | 503 | `media_unavailable` | Covers four cases: no media root is configured; a recorded file is missing or unreadable; the file's size no longer matches the manifest or index; or a path was rejected by the media store |
 
@@ -139,19 +144,32 @@ Supported natively by Starlette's `FileResponse` (Starlette 1.7):
 Previews and thumbnails also support ranges. Their ETag is the SHA-256
 recorded in the derivatives index.
 
-### Download policy (provisional)
+### Download policy (per product level)
 
-`original` serves the **Level 1** product, which is the Level 0 image bytes plus
-embedded AusCIN provenance XMP. Whether the public download should be Level 0
-or Level 1 is still undecided. When it is decided, the change is confined to
-`MediaRecord` and the `original` route.
+Both product levels can be downloaded explicitly:
 
-`isOriginalAvailable` is true only when all of these hold:
+- **Level 0** is the untouched source image.
+- **Level 1** is the AusCIN provenance copy.
+
+Each has its own registry permission, `level0_download_permitted` and
+`level1_download_permitted`. Both default to `false`, and neither implies
+the other. The single `original_download_permitted` flag has been retired:
+the registry model rejects it.
+
+`levelNDownloadAvailable` is true only when all of these hold:
 
 - the site is public
-- its registry entry has `original_download_permitted: true` (default `false`)
-- the Level 1 type is servable
+- its registry entry has `levelN_download_permitted: true`
+- that level's file type is servable
 - a media root is configured
+
+When a level is available, the response also carries `levelNDownloadUrl` and
+`levelNChecksumSha256`. The checksum is public integrity metadata, published
+only alongside a downloadable file. Internal paths are never returned.
+
+**Deprecated fields.** `isOriginalAvailable` and `originalUrl` still appear in
+responses for compatibility. They mirror Level 1 (`originalUrl` is the
+`/level1` URL), and the frontend no longer reads them.
 
 File existence is not checked when building JSON, because stat-ing every file
 would be a directory scan. A missing file surfaces as a 503 from the media
@@ -188,12 +206,14 @@ Any of the following rejects the **whole** input at startup:
 resolves paths only from catalogue records, never from a request. It follows
 symlinks and junctions and then requires the resolved file to be inside the
 media root. The only request inputs are the opaque media ID and a fixed kind:
-`original`, `preview` or `thumbnail`.
+`level0`, `level1`, `original` (deprecated), `preview` or `thumbnail`.
 
 ### No paths in responses
 
-- `MediaRecord` (the internal relative paths, size, checksum and dimensions) is
-  never serialised.
+- `MediaRecord` is never serialised. It holds each level's internal relative
+  path, content type, size, checksum and download permission, plus the
+  derivative records and dimensions. Only the public URLs, availability flags
+  and published checksums derived from it are returned.
 - Media URLs contain only the opaque media ID.
 - Headers carry only the opaque filename.
 
@@ -203,7 +223,7 @@ The loader also rejects:
 
 - entries whose root ID doesn't match the manifest
 - duplicate observations
-- Level 1 checksums that aren't SHA-256 hex
+- Level 0 or Level 1 checksums that aren't SHA-256 hex
 - a registry with duplicate site or root IDs, or unknown fields
 - a derivatives index for another root, for unknown observations, with
   non-JPEG derivatives, or with unknown fields
@@ -293,10 +313,14 @@ the committed fixture uses this to exercise a missing preview.
 
 Compared with `apps/web/data/types/coastsnap.ts`:
 
-- **Media URLs:** `thumbnailUrl`, `previewUrl` and `originalUrl` are API media
-  URLs when available, otherwise `null`. `representativeImageUrl` is always
-  `null`; the frontend type allows that, and falls back to a recent
-  observation's rendition.
+- **Media URLs:** `thumbnailUrl`, `previewUrl`, `level0DownloadUrl` and
+  `level1DownloadUrl` are API media URLs when available, otherwise `null`.
+  `representativeImageUrl` is always `null`; the frontend type allows that,
+  and falls back to a recent observation's rendition.
+- **Downloads:** `level0DownloadAvailable` / `level1DownloadAvailable`, plus
+  `level0ChecksumSha256` / `level1ChecksumSha256` (which are `null` unless
+  that level is available). `isOriginalAvailable` / `originalUrl` are
+  deprecated and mirror Level 1.
 - **Dimensions:** `width`/`height` are integers from the derivatives index,
   or `null`. The frontend treats `null` as "not recorded".
 - **Contributor:** `contributor.displayName` is always the placeholder
@@ -312,7 +336,7 @@ This proves the whole chain locally, with synthetic data only:
 
 ```
 worker manifest → worker-generated thumbnails/previews → FastAPI catalogue
-  → Next.js CoastSnap pages → preview → original download (checksum-verified)
+  → Next.js CoastSnap pages → preview → Level 0 and Level 1 downloads (checksum-verified)
 ```
 
 It never touches Spotteron, Nectar, Gadi or `/g/data`.
@@ -331,9 +355,10 @@ apps\api\.venv\Scripts\python.exe scripts\coastsnap_e2e_smoke.py
 
 1. **Stages synthetic data outside the repository.** It creates a temporary
    directory under the system temp directory (refusing any location inside
-   the repository). In it, it writes five synthetic Level 1 JPEGs generated
-   with Pillow (1600–3000 px) and a manifest written with the worker's own
-   models. The manifest uses the fixture registry's `TEST_ROOT_ID` /
+   the repository). In it, it writes five synthetic Level 0 JPEGs generated
+   with Pillow (1600–3000 px), Level 1 copies of them with an added
+   provenance segment (so the two levels differ), and a manifest written
+   with the worker's own models. The manifest uses the fixture registry's `TEST_ROOT_ID` /
    `CS-TEST-SITE`.
 2. **Generates derivatives with the real worker command.** It runs
    `python -m coastsnap_import.derivatives` with `--max-images 4`, so the
@@ -355,15 +380,21 @@ apps\api\.venv\Scripts\python.exe scripts\coastsnap_e2e_smoke.py
      API-backed and use the API-mode footer.
    - **Renditions:** thumbnail and preview responses are JPEGs within
      400/1600 px.
-   - **Original download:** an attachment named by the opaque media ID, with
-     SHA-256 = manifest, and Range support.
+   - **Level 0 and Level 1 downloads:** each must be an attachment named
+     `<media_id>_<level>.jpg`, with that level's ETag, SHA-256 equal to that
+     level's manifest checksum, a matching published checksum, and Range
+     support. The two levels must differ, and the deprecated `/original`
+     must still serve Level 1.
+   - **Detail page:** it shows both buttons, "Download original (Level 0)" and
+     "Download provenance copy (Level 1)", with explanations.
    - **No fallback:** a missing derivative returns 404 and is never
-     substituted with the original.
+     substituted with either level.
    - **No leaks:** no `/g/data`, staging, repository or internal paths, and
      no raw Spotteron IDs, in any public response or rendered page.
-6. **Restarts the API with downloads restricted.** `originalUrl` must become
-   null, `/original` must return 403, and the page must drop the download
-   action.
+6. **Restarts the API with Level 0 withheld and Level 1 permitted.** Level 0's
+   URL and checksum must become null, `/level0` must return 403, Level 1 and
+   `/original` must keep working, and the page must show only the Level 1
+   button, with an explanation of why Level 0 is unavailable.
 7. **Cleans up.** It stops both servers (whole process trees) and deletes the
    staging directory.
 
@@ -413,12 +444,15 @@ cd apps\web
 $env:COASTSNAP_API_BASE_URL = "http://127.0.0.1:8000"
 npm run dev
 
-# Verify one download against the manifest: the hash must equal that entry's
-# level1.checksum.sha256. Take a mediaId from
+# Verify both downloads against the manifest: each hash must equal that entry's
+# level0.checksum.sha256 / level1.checksum.sha256 (also published as
+# level0ChecksumSha256 / level1ChecksumSha256). Take a mediaId from
 # http://127.0.0.1:8000/api/v1/coastsnap/sites/CS-TEST-SITE/observations
 $id = "<mediaId>"
-Invoke-WebRequest "http://127.0.0.1:8000/media/coastsnap/$id/original" -OutFile "$staging\download.jpg"
-(Get-FileHash "$staging\download.jpg" -Algorithm SHA256).Hash.ToLower()
+Invoke-WebRequest "http://127.0.0.1:8000/media/coastsnap/$id/level0" -OutFile "$staging\download-level0.jpg"
+Invoke-WebRequest "http://127.0.0.1:8000/media/coastsnap/$id/level1" -OutFile "$staging\download-level1.jpg"
+(Get-FileHash "$staging\download-level0.jpg" -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash "$staging\download-level1.jpg" -Algorithm SHA256).Hash.ToLower()
 
 # Clean up: stop both servers first
 Remove-Item -Recurse -Force $staging
@@ -437,7 +471,10 @@ and kept outside the repository. Two offline commands support it:
   - unset or blank values, and unresolved `<...>` placeholders
   - an invalid slug or root ID, out-of-range coordinates, or an invalid time
     zone or date
-  - a missing explicit publication or download decision
+  - a missing explicit publication decision, or a missing explicit
+    `COASTSNAP_SITE_LEVEL0_DOWNLOAD_PERMITTED` /
+    `COASTSNAP_SITE_LEVEL1_DOWNLOAD_PERMITTED` decision (the retired single
+    `COASTSNAP_SITE_DOWNLOAD_PERMITTED` is refused)
   - local paths inside the repository or under `/g/data`
   - a manifest path that isn't the worker's default
 
@@ -457,7 +494,8 @@ In outline, once the project owner supplies the real values:
    - `spotteron_root_id: "<SPOTTERON_ROOT_ID>"`
    - real name, region, coordinates, description and time zone
    - `publication_status`
-   - `original_download_permitted`
+   - `level0_download_permitted` and `level1_download_permitted`, each set
+     deliberately
    - licence and attribution text, once decided
 3. **Media roots.** Point `COASTSNAP_MEDIA_ROOT` / `COASTSNAP_DERIVATIVES_ROOT`
    at local, read-only published copies. Serving directly from

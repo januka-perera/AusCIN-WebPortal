@@ -26,6 +26,15 @@ export function Button(props: ButtonProps) {
 
   if (typeof rest.href === "string") {
     const { href, ...linkRest } = rest;
+    // Absolute URLs (e.g. catalogue API downloads on another origin) are plain
+    // anchors: client-side routing doesn't apply to them.
+    if (/^https?:\/\//i.test(href)) {
+      return (
+        <a href={href} {...linkRest} className={styles}>
+          {children}
+        </a>
+      );
+    }
     return (
       <Link href={href} {...linkRest} className={styles}>
         {children}

@@ -60,13 +60,16 @@ def _write(root: Path, relative_path: str, data: bytes) -> None:
 def build_media_root(
     root: Path, manifest_path: Path, derivatives_index_path: Path, derivatives_root: Path | None = None
 ) -> Path:
-    """Writes every Level 1 file referenced by the fixture manifest under ``root``, and every
-    derivative in the (schema_version 2) fixture index under ``derivatives_root`` (default: ``root``)."""
+    """Writes every Level 0 and Level 1 file referenced by the fixture manifest under ``root``, and every
+    derivative in the (schema_version 2) fixture index under ``derivatives_root`` (default: ``root``).
+    Level 0 and Level 1 bytes differ, as real ones do (Level 1 carries provenance metadata)."""
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     for entry in manifest["entries"]:
-        level1 = entry.get("level1")
-        if level1:
-            _write(root, level1["local_relative_path"], level_bytes(entry["observation"]["observation_id"], 1))
+        observation_id = entry["observation"]["observation_id"]
+        for level_key, level_number in (("level0", 0), ("level1", 1)):
+            product = entry.get(level_key)
+            if product:
+                _write(root, product["local_relative_path"], level_bytes(observation_id, level_number))
     index = json.loads(derivatives_index_path.read_text(encoding="utf-8"))
     for item in index["derivatives"]:
         for kind in ("thumbnail", "preview"):

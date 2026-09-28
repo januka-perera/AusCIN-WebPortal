@@ -106,18 +106,30 @@ export interface CoastSnapObservation {
   /** Null when a preview could not be generated. */
   previewUrl: string | null;
   /**
-   * Whether an original file is available to download. Kept as its own
-   * explicit flag (rather than only inferring availability from
-   * `originalUrl` being non-null) because a future ingested record could
-   * know availability before a real download URL is populated. In this
-   * prototype, true only for a single clearly-labelled mock record used
-   * to exercise the "download available" UI state — see
+   * Level 0: the untouched source image, exactly as downloaded from Spotteron.
+   * `level0DownloadAvailable` is true only when the catalogue permits and
+   * offers it, and `level0DownloadUrl` is then its API URL. Never a
+   * filesystem or /g/data path.
+   */
+  level0DownloadAvailable: boolean;
+  level0DownloadUrl: string | null;
+  /** Published SHA-256 of the Level 0 file, present only when that level is downloadable. */
+  level0ChecksumSha256?: string;
+  /** Level 1: the AusCIN provenance copy (Level 0 plus embedded provenance metadata). Same rules as Level 0. */
+  level1DownloadAvailable: boolean;
+  level1DownloadUrl: string | null;
+  /** Published SHA-256 of the Level 1 file, present only when that level is downloadable. */
+  level1ChecksumSha256?: string;
+  /**
+   * @deprecated Use the per-level fields. For API records this mirrors
+   * `level1DownloadAvailable`. The sample dataset still uses it for its one
+   * clearly labelled prototype download demo; see
    * data/sample/coastsnap-observations.ts.
    */
   isOriginalAvailable: boolean;
-  /** The original file's URL when isOriginalAvailable is true. Null otherwise. Never a filesystem or /g/data path. */
+  /** @deprecated Use `level0DownloadUrl` / `level1DownloadUrl`. Mirrors Level 1 for API records. */
   originalUrl: string | null;
-  /** SHA-256 checksum of the original file, once one exists to check. Undefined for every observation in this prototype. */
+  /** @deprecated Use `level0ChecksumSha256` / `level1ChecksumSha256`. */
   checksumSha256?: string;
   caption: string;
   altText: string;

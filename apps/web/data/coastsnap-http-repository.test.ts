@@ -16,6 +16,8 @@ const API = "http://localhost:8000";
 const SITE_ID = "CS-TEST-SITE";
 const MEDIA_ID = "csm_5cea933ee069d94a0cd93aaa";
 const MEDIA_ID_2 = "csm_0a1b2c3d4e5f60718293a4b5";
+const SHA_LEVEL0 = "5a0efd023e3d18297020cbcd68b02a3c6df3563a341cb86474006b1670c8fa95";
+const SHA_LEVEL1 = "f812875b6c299e1841a2c2534f4575e8d1cd977336de19996bda369328233857";
 
 const apiSite = {
   id: SITE_ID,
@@ -54,8 +56,15 @@ function apiObservation(overrides: ApiObservation = {}): ApiObservation {
     publicationStatus: "public",
     thumbnailUrl: `${API}/media/coastsnap/${mediaId}/thumbnail`,
     previewUrl: `${API}/media/coastsnap/${mediaId}/preview`,
+    level0DownloadUrl: `${API}/media/coastsnap/${mediaId}/level0`,
+    level1DownloadUrl: `${API}/media/coastsnap/${mediaId}/level1`,
+    level0DownloadAvailable: true,
+    level1DownloadAvailable: true,
+    level0ChecksumSha256: SHA_LEVEL0,
+    level1ChecksumSha256: SHA_LEVEL1,
+    // Deprecated fields, sent by the API as a mirror of Level 1.
     isOriginalAvailable: true,
-    originalUrl: `${API}/media/coastsnap/${mediaId}/original`,
+    originalUrl: `${API}/media/coastsnap/${mediaId}/level1`,
     caption: "Test Beach CoastSnap — CoastSnap observation, 1 September 2026",
     altText: "Community photo of Test Beach CoastSnap taken from the CoastSnap alignment mark on 1 September 2026.",
     isSynthetic: true,
@@ -211,8 +220,14 @@ describe("HttpCoastSnapRepository observations", () => {
       publicationStatus: "public",
       thumbnailUrl: `${API}/media/coastsnap/${MEDIA_ID}/thumbnail`,
       previewUrl: `${API}/media/coastsnap/${MEDIA_ID}/preview`,
+      level0DownloadAvailable: true,
+      level0DownloadUrl: `${API}/media/coastsnap/${MEDIA_ID}/level0`,
+      level0ChecksumSha256: SHA_LEVEL0,
+      level1DownloadAvailable: true,
+      level1DownloadUrl: `${API}/media/coastsnap/${MEDIA_ID}/level1`,
+      level1ChecksumSha256: SHA_LEVEL1,
       isOriginalAvailable: true,
-      originalUrl: `${API}/media/coastsnap/${MEDIA_ID}/original`,
+      originalUrl: `${API}/media/coastsnap/${MEDIA_ID}/level1`,
       caption: "Test Beach CoastSnap — CoastSnap observation, 1 September 2026",
       altText: "Community photo of Test Beach CoastSnap taken from the CoastSnap alignment mark on 1 September 2026.",
       isSynthetic: true,
@@ -343,34 +358,77 @@ describe("HttpCoastSnapRepository media URLs and download states", () => {
     expect(observation.previewUrl).toBeNull();
   });
 
-  it("offers a permitted original download", async () => {
+  it("offers both permitted levels with their URLs and published checksums", async () => {
     const observation = await observationWith({});
-    expect(observation.isOriginalAvailable).toBe(true);
-    expect(observation.originalUrl).toBe(`${API}/media/coastsnap/${MEDIA_ID}/original`);
+    expect(observation.level0DownloadAvailable).toBe(true);
+    expect(observation.level0DownloadUrl).toBe(`${API}/media/coastsnap/${MEDIA_ID}/level0`);
+    expect(observation.level0ChecksumSha256).toBe(SHA_LEVEL0);
+    expect(observation.level1DownloadAvailable).toBe(true);
+    expect(observation.level1DownloadUrl).toBe(`${API}/media/coastsnap/${MEDIA_ID}/level1`);
+    expect(observation.level1ChecksumSha256).toBe(SHA_LEVEL1);
   });
 
-  it("does not offer a restricted or unavailable original", async () => {
-    const restricted = await observationWith({ isOriginalAvailable: false, originalUrl: null });
-    expect(restricted.isOriginalAvailable).toBe(false);
-    expect(restricted.originalUrl).toBeNull();
+  it.each([
+    ["only Level 0", { level1DownloadAvailable: false, level1DownloadUrl: null, level1ChecksumSha256: null }, true, false],
+    ["only Level 1", { level0DownloadAvailable: false, level0DownloadUrl: null, level0ChecksumSha256: null }, false, true],
+    ["neither level", {
+      level0DownloadAvailable: false, level0DownloadUrl: null, level0ChecksumSha256: null,
+      level1DownloadAvailable: false, level1DownloadUrl: null, level1ChecksumSha256: null,
+    }, false, false],
+  ])("maps independent permissions (%s)", async (_label, overrides, level0, level1) => {
+    const observation = await observationWith(overrides);
+    expect(observation.level0DownloadAvailable).toBe(level0);
+    expect(observation.level1DownloadAvailable).toBe(level1);
+    expect(observation.level0DownloadUrl === null).toBe(!level0);
+    expect(observation.level1DownloadUrl === null).toBe(!level1);
+    expect("level0ChecksumSha256" in observation).toBe(level0);
+    expect("level1ChecksumSha256" in observation).toBe(level1);
   });
 
-  it("never offers a download whose URL fails validation, even if the API says it's available", async () => {
-    const observation = await observationWith({ originalUrl: "https://elsewhere.example/media/coastsnap/x/original" });
-    expect(observation.isOriginalAvailable).toBe(false);
-    expect(observation.originalUrl).toBeNull();
+  it("derives the deprecated fields from Level 1 only, ignoring the API's own deprecated fields", async () => {
+    const onlyLevel0 = await observationWith({
+      level1DownloadAvailable: false, level1DownloadUrl: null, level1ChecksumSha256: null,
+      isOriginalAvailable: true, originalUrl: `${API}/media/coastsnap/${MEDIA_ID}/level0`,
+    });
+    expect(onlyLevel0.isOriginalAvailable).toBe(false);
+    expect(onlyLevel0.originalUrl).toBeNull();
+    const both = await observationWith({});
+    expect(both.isOriginalAvailable).toBe(true);
+    expect(both.originalUrl).toBe(both.level1DownloadUrl);
+  });
+
+  it.each([
+    ["another host", "level0DownloadUrl", "https://elsewhere.example/media/coastsnap/x/level0"],
+    ["the other level's URL", "level0DownloadUrl", `${API}/media/coastsnap/${MEDIA_ID}/level1`],
+    ["the deprecated /original path", "level1DownloadUrl", `${API}/media/coastsnap/${MEDIA_ID}/original`],
+    ["a staging path", "level1DownloadUrl", "/level-1/root-TEST_ROOT_ID/2026/08/01/images/TEST_OBS_0001.jpg"],
+  ])("never offers a level whose URL fails validation (%s), even if the API says it's available", async (_label, field, url) => {
+    const observation = await observationWith({ [field]: url });
+    const level = field.startsWith("level0") ? "level0" : "level1";
+    expect(observation[`${level}DownloadAvailable`]).toBe(false);
+    expect(observation[`${level}DownloadUrl`]).toBeNull();
+    expect(`${level}ChecksumSha256` in observation).toBe(false);
+  });
+
+  it.each(["not-a-checksum", "A".repeat(64), "a".repeat(63), 42])("rejects a malformed published checksum (%s)", async (checksum) => {
+    const { repository } = repo((url) =>
+      url.pathname.endsWith(MEDIA_ID) ? { status: 200, body: apiObservation({ level0ChecksumSha256: checksum }) } : undefined,
+    );
+    await expect(repository.getObservationForSite(SITE_ID, MEDIA_ID)).rejects.toMatchObject({ kind: "invalid-response" });
   });
 
   it("resolves root-relative media URLs against the API origin, never the Next.js origin", async () => {
     const observation = await observationWith({
       thumbnailUrl: `/media/coastsnap/${MEDIA_ID}/thumbnail`,
       previewUrl: `/media/coastsnap/${MEDIA_ID}/preview`,
-      originalUrl: `/media/coastsnap/${MEDIA_ID}/original`,
+      level0DownloadUrl: `/media/coastsnap/${MEDIA_ID}/level0`,
+      level1DownloadUrl: `/media/coastsnap/${MEDIA_ID}/level1`,
     });
     expect(observation.thumbnailUrl).toBe(`${API}/media/coastsnap/${MEDIA_ID}/thumbnail`);
     expect(observation.previewUrl).toBe(`${API}/media/coastsnap/${MEDIA_ID}/preview`);
-    expect(observation.originalUrl).toBe(`${API}/media/coastsnap/${MEDIA_ID}/original`);
-    for (const url of [observation.thumbnailUrl, observation.previewUrl, observation.originalUrl]) {
+    expect(observation.level0DownloadUrl).toBe(`${API}/media/coastsnap/${MEDIA_ID}/level0`);
+    expect(observation.level1DownloadUrl).toBe(`${API}/media/coastsnap/${MEDIA_ID}/level1`);
+    for (const url of [observation.thumbnailUrl, observation.previewUrl, observation.level0DownloadUrl, observation.level1DownloadUrl]) {
       expect(url).not.toContain("localhost:3000");
     }
   });
@@ -384,7 +442,8 @@ describe("HttpCoastSnapRepository media URLs and download states", () => {
               body: apiObservation({
                 thumbnailUrl: `/media/coastsnap/${MEDIA_ID}/thumbnail`,
                 previewUrl: `https://media.example.test/media/coastsnap/${MEDIA_ID}/preview`,
-                originalUrl: `http://127.0.0.1:8000/media/coastsnap/${MEDIA_ID}/original`,
+                level0DownloadUrl: `https://media.example.test/media/coastsnap/${MEDIA_ID}/level0`,
+                level1DownloadUrl: `http://127.0.0.1:8000/media/coastsnap/${MEDIA_ID}/level1`,
               }),
             }
           : undefined,
@@ -393,9 +452,11 @@ describe("HttpCoastSnapRepository media URLs and download states", () => {
     const observation = await repository.getObservationForSite(SITE_ID, MEDIA_ID);
     expect(observation?.thumbnailUrl).toBe(`https://media.example.test/media/coastsnap/${MEDIA_ID}/thumbnail`);
     expect(observation?.previewUrl).toBe(`https://media.example.test/media/coastsnap/${MEDIA_ID}/preview`);
+    expect(observation?.level0DownloadUrl).toBe(`https://media.example.test/media/coastsnap/${MEDIA_ID}/level0`);
     // An absolute URL on the internal API origin isn't browser-reachable, so it's dropped.
+    expect(observation?.level1DownloadUrl).toBeNull();
+    expect(observation?.level1DownloadAvailable).toBe(false);
     expect(observation?.originalUrl).toBeNull();
-    expect(observation?.isOriginalAvailable).toBe(false);
   });
 
   it.each([
@@ -437,6 +498,8 @@ describe("HttpCoastSnapRepository media URLs and download states", () => {
             apiObservation({
               thumbnailUrl: "/g/data/qu34/AusCIN/derivatives/thumbnails/x.jpg",
               previewUrl: "file:///srv/staging/level-1/x.jpg",
+              level0DownloadUrl: "/g/data/qu34/AusCIN/level-0/root-TEST_ROOT_ID/x.jpg",
+              level1DownloadUrl: "/level-1/root-TEST_ROOT_ID/x.jpg",
               originalUrl: "/level-1/root-TEST_ROOT_ID/x.jpg",
             }),
           ]),

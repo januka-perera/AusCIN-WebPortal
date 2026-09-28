@@ -1,15 +1,16 @@
 """Local end-to-end smoke test for the CoastSnap publication workflow.
 
     worker manifest -> worker-generated thumbnails/previews -> FastAPI catalogue
-      -> Next.js CoastSnap pages -> preview -> original download (checksum-verified)
+      -> Next.js CoastSnap pages -> preview -> Level 0 and Level 1 downloads (checksum-verified)
 
 Everything is synthetic and local. There are no Spotteron, Nectar, Gadi or
 /g/data paths, and nothing from the untracked test-coastsnap.jpg or tools/ is
 used. Steps:
 
 1. Create a temporary staging directory OUTSIDE the repository, containing
-   synthetic Level 1 JPEGs made with Pillow and a manifest written with the
-   worker's own models. It uses the fixture registry's TEST_ROOT_ID and site
+   synthetic Level 0 JPEGs made with Pillow, and Level 1 copies of them with
+   an added provenance segment, so the two levels have different bytes and
+   checksums. The manifest is written with the worker's own models. It uses the fixture registry's TEST_ROOT_ID and site
    CS-TEST-SITE.
 2. Run the real `python -m coastsnap_import.derivatives` twice. The first run
    processes 4 of 5 images (`--max-images 4`, so the 5th has no derivatives
@@ -20,12 +21,18 @@ used. Steps:
 5. Verify the API and the rendered pages:
    - `/coastsnap`, the archive and a media detail page
    - thumbnail and preview responses
-   - the original download: attachment disposition, and a checksum that
-     matches the manifest
-   - a missing derivative never falls back to the original
+   - both the Level 0 and Level 1 downloads: attachment disposition,
+     opaque per-level filename, ETag, Range support, and bytes whose
+     SHA-256 matches that level's manifest checksum. The two levels must
+     differ.
+   - the deprecated /original alias still serves Level 1
+   - both download buttons on the detail page
+   - a missing derivative never falls back to either level
    - no internal paths or source IDs appear in any public response
-6. Restart the API with original downloads restricted, and verify the download
-   action and URL disappear and /original returns 403.
+6. Restart the API with Level 0 withheld and Level 1 permitted. Verify that
+   only the Level 1 action remains, that the page explains why Level 0 is
+   unavailable, that /level0 returns 403, and that the deprecated /original
+   still follows Level 1.
 7. Stop both servers and delete the staging directory.
 
 Run from the repository root with the API virtual environment. It needs
@@ -111,7 +118,8 @@ def step(title: str) -> None:
 # --- Synthetic data -----------------------------------------------------------------------
 
 
-def make_level1_jpeg(width: int, height: int, seed: int) -> bytes:
+def make_level0_jpeg(width: int, height: int, seed: int) -> bytes:
+    """A synthetic stand-in for an untouched Spotteron source image."""
     from PIL import Image
 
     image = Image.new("RGB", (width, height), (40 + seed * 30, 110, 150 - seed * 10))
@@ -122,8 +130,16 @@ def make_level1_jpeg(width: int, height: int, seed: int) -> bytes:
     return buffer.getvalue()
 
 
+def make_level1_from_level0(level0: bytes, observation_id: str) -> bytes:
+    """A synthetic Level 1: the identical image data with a provenance segment added (a JPEG COM
+    segment after SOI), mirroring how the worker embeds metadata without re-encoding the image."""
+    payload = f"AusCIN synthetic provenance - {observation_id}".encode("ascii")
+    segment = b"\xff\xfe" + (len(payload) + 2).to_bytes(2, "big") + payload
+    return level0[:2] + segment + level0[2:]
+
+
 def build_staging(staging: Path) -> tuple[Path, dict[str, dict]]:
-    """Writes synthetic Level 1 files and a worker-format manifest. Returns (manifest path, expected-by-observation)."""
+    """Writes synthetic Level 0 and Level 1 files and a worker-format manifest. Returns (manifest path, expected-by-observation)."""
     from coastsnap_import.models import (
         ChecksumInfo, Level0Product, Level1Product, Manifest, ManifestEntry, ProcessingDetails, ProductLevel,
         SourceObservation, SourceSite, build_level_relative_path, build_site_directory_id, build_source_record_paths,
@@ -133,14 +149,16 @@ def build_staging(staging: Path) -> tuple[Path, dict[str, dict]]:
     site_dir = build_site_directory_id(ROOT_ID)
     entries, expected = [], {}
     for seed, (obs_id, captured, (width, height)) in enumerate(OBSERVATIONS):
-        data = make_level1_jpeg(width, height, seed)
-        sha = hashlib.sha256(data).hexdigest()
+        level0_data = make_level0_jpeg(width, height, seed)
+        level1_data = make_level1_from_level0(level0_data, obs_id)
         l1 = build_level_relative_path(ProductLevel.LEVEL_1, site_dir, captured, f"{obs_id}.jpg")
         l0 = build_level_relative_path(ProductLevel.LEVEL_0, site_dir, captured, f"{obs_id}.jpg")
-        target = staging.joinpath(*l1.split("/"))
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(data)
-        checksum = ChecksumInfo(sha256=sha, computed_at_utc=now)
+        for relative, data in ((l0, level0_data), (l1, level1_data)):
+            target = staging.joinpath(*relative.split("/"))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        level0_sha = hashlib.sha256(level0_data).hexdigest()
+        level1_sha = hashlib.sha256(level1_data).hexdigest()
         entries.append(ManifestEntry(
             site=SourceSite(root_id=ROOT_ID),
             observation=SourceObservation(
@@ -151,12 +169,13 @@ def build_staging(staging: Path) -> tuple[Path, dict[str, dict]]:
             level0=Level0Product(
                 product_id=f"{obs_id}-L0", parent_observation_id=obs_id,
                 source_url=f"https://example.invalid/e2e/{obs_id}.jpg", local_relative_path=l0,
-                remote_relative_path=l0, file_size_bytes=len(data), content_type="image/jpeg",
-                checksum=checksum, downloaded_at_utc=now,
+                remote_relative_path=l0, file_size_bytes=len(level0_data), content_type="image/jpeg",
+                checksum=ChecksumInfo(sha256=level0_sha, computed_at_utc=now), downloaded_at_utc=now,
             ),
             level1=Level1Product(
                 product_id=f"{obs_id}-L1", parent_product_id=f"{obs_id}-L0", parent_observation_id=obs_id,
-                local_relative_path=l1, remote_relative_path=l1, file_size_bytes=len(data), checksum=checksum,
+                local_relative_path=l1, remote_relative_path=l1, file_size_bytes=len(level1_data),
+                checksum=ChecksumInfo(sha256=level1_sha, computed_at_utc=now),
                 processing=ProcessingDetails(
                     embedder_backend="exiftool", embedded_metadata_fields=[], processing_software="coastsnap-import",
                     processing_version="0.1.0", processed_at_utc=now,
@@ -164,7 +183,7 @@ def build_staging(staging: Path) -> tuple[Path, dict[str, dict]]:
             ),
             ingested_at_utc=now,
         ))
-        expected[obs_id] = {"sha256": sha, "size": len(data), "width": width, "height": height}
+        expected[obs_id] = {"level0": level0_sha, "level1": level1_sha, "width": width, "height": height}
 
     manifest = Manifest(
         run_id=now.strftime("%Y%m%dT%H%M%SZ"), root_id=ROOT_ID, topic_id=37,
@@ -297,8 +316,9 @@ def check_api(report: Report, api: str, staging: Path, expected: dict[str, dict]
         missing["thumbnailUrl"] is None and missing["previewUrl"] is None and missing["width"] is None,
     )
     report.check(
-        "original download URL present for every observation (downloads permitted)",
-        all(item["isOriginalAvailable"] and item["originalUrl"] for item in items.values()),
+        "Level 0 and Level 1 download URLs present for every observation (both permitted)",
+        all(item["level0DownloadAvailable"] and item["level0DownloadUrl"] and item["level1DownloadAvailable"]
+            and item["level1DownloadUrl"] for item in items.values()),
     )
 
     sample = items[media_id(WITH_DERIVATIVES[0])]
@@ -311,20 +331,34 @@ def check_api(report: Report, api: str, staging: Path, expected: dict[str, dict]
         header_text = "\n".join(f"{k}: {v}" for k, v in rendition.headers.items())
         scan_public(report, f"{kind} headers", header_text, staging)
 
-    original = httpx.get(sample["originalUrl"], timeout=20)
-    disposition = original.headers.get("content-disposition", "")
-    report.check("original download returns HTTP 200", original.status_code == 200, f"HTTP {original.status_code}")
-    report.check(
-        "original download is an attachment named by the opaque media ID",
-        disposition == f'attachment; filename="{sample["mediaId"]}.jpg"', disposition,
-    )
-    digest = hashlib.sha256(original.content).hexdigest()
-    report.check("downloaded bytes match the manifest's Level 1 SHA-256", digest == expected[WITH_DERIVATIVES[0]]["sha256"],
-                 f"{digest} != {expected[WITH_DERIVATIVES[0]]['sha256']}")
-    report.check("original ETag is the manifest checksum", original.headers.get("etag") == f'"{digest}"')
-    ranged = httpx.get(sample["originalUrl"], headers={"Range": "bytes=0-99"}, timeout=10)
-    report.check("original supports HTTP Range requests", ranged.status_code == 206 and len(ranged.content) == 100)
-    scan_public(report, "original download headers", "\n".join(f"{k}: {v}" for k, v in original.headers.items()), staging)
+    manifest_sha = expected[WITH_DERIVATIVES[0]]
+    downloaded: dict[str, bytes] = {}
+    for level, label in (("level0", "Level 0"), ("level1", "Level 1")):
+        response = httpx.get(sample[f"{level}DownloadUrl"], timeout=20)
+        downloaded[level] = response.content
+        disposition = response.headers.get("content-disposition", "")
+        report.check(f"{label} download returns HTTP 200", response.status_code == 200, f"HTTP {response.status_code}")
+        report.check(
+            f"{label} download is an attachment named by the opaque media ID and level",
+            disposition == f'attachment; filename="{sample["mediaId"]}_{level}.jpg"', disposition,
+        )
+        report.check(f"{label} content type is image/jpeg", response.headers.get("content-type") == "image/jpeg")
+        digest = hashlib.sha256(response.content).hexdigest()
+        report.check(f"{label} downloaded bytes match the manifest's {label} SHA-256", digest == manifest_sha[level],
+                     f"{digest} != {manifest_sha[level]}")
+        report.check(f"{label} ETag is the manifest {label} checksum", response.headers.get("etag") == f'"{manifest_sha[level]}"')
+        report.check(f"{label} published checksum matches the manifest", sample[f"{level}ChecksumSha256"] == manifest_sha[level])
+        ranged = httpx.get(sample[f"{level}DownloadUrl"], headers={"Range": "bytes=0-99"}, timeout=10)
+        report.check(f"{label} supports HTTP Range requests",
+                     ranged.status_code == 206 and ranged.content == response.content[:100])
+        scan_public(report, f"{label} download headers", "\n".join(f"{k}: {v}" for k, v in response.headers.items()), staging)
+    report.check("Level 0 and Level 1 downloads differ (Level 1 carries provenance)",
+                 downloaded["level0"] != downloaded["level1"])
+
+    alias = httpx.get(f"{api}/media/coastsnap/{sample['mediaId']}/original", timeout=20)
+    report.check("deprecated /original still serves the Level 1 bytes",
+                 alias.status_code == 200 and alias.content == downloaded["level1"])
+    report.check("deprecated /original is marked with a Deprecation header", alias.headers.get("deprecation") == "true")
 
     no_fallback = True
     for kind in ("thumbnail", "preview"):
@@ -335,7 +369,7 @@ def check_api(report: Report, api: str, staging: Path, expected: dict[str, dict]
             and response.headers.get("content-type", "").startswith("application/json")
             and response.json()["error"]["code"] == f"{kind}_not_available"
         )
-    report.check("missing derivative returns 404 and never falls back to the original", no_fallback)
+    report.check("missing derivative returns 404 and never falls back to Level 0 or Level 1", no_fallback)
     return items
 
 
@@ -365,35 +399,52 @@ def check_frontend(report: Report, web: str, api: str, staging: Path, items: dic
 
         detail = page(f"/coastsnap/{SITE_ID}/archive/{derived}")
         report.check("detail page renders the API preview", f"{api}/media/coastsnap/{derived}/preview" in detail)
-        report.check("detail page offers the real download", f"{api}/media/coastsnap/{derived}/original" in detail
-                     and "Download original" in detail and "prototype demo" not in detail)
+        report.check("detail page offers both download buttons",
+                     "Download original (Level 0)" in detail and "Download provenance copy (Level 1)" in detail)
+        report.check("detail page links both levels at the API origin",
+                     f'href="{api}/media/coastsnap/{derived}/level0"' in detail
+                     and f'href="{api}/media/coastsnap/{derived}/level1"' in detail)
+        report.check("detail page explains Level 0 and Level 1",
+                     "untouched source image" in detail and "AusCIN provenance metadata" in detail)
+        report.check("detail page shows no prototype wording or deprecated /original link",
+                     "prototype demo" not in detail and "/original" not in detail)
         w, h = items[derived]["width"], items[derived]["height"]
         report.check("detail page shows trusted dimensions", f"{w} × {h}" in detail)
 
         missing_page = page(f"/coastsnap/{SITE_ID}/archive/{missing}")
         report.check("missing-derivative page shows the unavailable preview state", "No preview is available" in missing_page)
         img_srcs = re.findall(r'<img[^>]+src="([^"]+)"', missing_page)
-        report.check("missing-derivative page never uses the original as an image",
-                     not any("/original" in src for src in img_srcs), f"img srcs {img_srcs}")
+        report.check("missing-derivative page never uses Level 0 or Level 1 as an image",
+                     not any(re.search(r"/(level0|level1|original)$", src) for src in img_srcs), f"img srcs {img_srcs}")
     else:
-        step("Next.js pages (downloads restricted)")
+        step("Next.js pages (Level 0 withheld, Level 1 permitted)")
         detail = page(f"/coastsnap/{SITE_ID}/archive/{derived}")
-        report.check("restricted: no download action or original URL on the page",
-                     "Download original" not in detail and "/original" not in detail)
-        report.check("restricted: page explains the original is unavailable", "Original unavailable" in detail)
-        report.check("restricted: preview still rendered", f"{api}/media/coastsnap/{derived}/preview" in detail)
+        report.check("partial: only the Level 1 button is rendered",
+                     "Download provenance copy (Level 1)" in detail and "Download original (Level 0)" not in detail)
+        report.check("partial: no Level 0 link on the page", f"{api}/media/coastsnap/{derived}/level0" not in detail)
+        report.check("partial: page explains why Level 0 is unavailable",
+                     "Level 0 (untouched source image) is not offered for download" in detail)
+        report.check("partial: preview still rendered", f"{api}/media/coastsnap/{derived}/preview" in detail)
 
 
-def check_restricted_api(report: Report, api: str) -> None:
+def check_partial_policy_api(report: Report, api: str, expected: dict[str, dict]) -> None:
     import httpx
 
-    step("API with original downloads restricted")
-    item = httpx.get(f"{api}/api/v1/coastsnap/sites/{SITE_ID}/observations/{media_id(WITH_DERIVATIVES[0])}", timeout=10).json()
-    report.check("restricted: originalUrl is null and isOriginalAvailable is false",
-                 item["originalUrl"] is None and item["isOriginalAvailable"] is False)
-    response = httpx.get(f"{api}/media/coastsnap/{media_id(WITH_DERIVATIVES[0])}/original", timeout=10)
-    report.check("restricted: /original returns 403 download_not_permitted",
-                 response.status_code == 403 and response.json()["error"]["code"] == "download_not_permitted")
+    step("API with Level 0 withheld and Level 1 permitted")
+    mid = media_id(WITH_DERIVATIVES[0])
+    item = httpx.get(f"{api}/api/v1/coastsnap/sites/{SITE_ID}/observations/{mid}", timeout=10).json()
+    report.check("partial: Level 0 URL, availability and checksum are withheld",
+                 item["level0DownloadUrl"] is None and item["level0DownloadAvailable"] is False
+                 and item["level0ChecksumSha256"] is None)
+    report.check("partial: Level 1 remains available", item["level1DownloadAvailable"] is True and item["level1DownloadUrl"])
+    level0 = httpx.get(f"{api}/media/coastsnap/{mid}/level0", timeout=10)
+    report.check("partial: /level0 returns 403 download_not_permitted",
+                 level0.status_code == 403 and level0.json()["error"]["code"] == "download_not_permitted")
+    level1 = httpx.get(f"{api}/media/coastsnap/{mid}/level1", timeout=20)
+    report.check("partial: /level1 still serves the Level 1 bytes",
+                 level1.status_code == 200 and hashlib.sha256(level1.content).hexdigest() == expected[WITH_DERIVATIVES[0]]["level1"])
+    alias = httpx.get(f"{api}/media/coastsnap/{mid}/original", timeout=20)
+    report.check("partial: deprecated /original follows Level 1", alias.status_code == 200)
 
 
 # --- Main ------------------------------------------------------------------------------------
@@ -453,7 +504,7 @@ def main() -> int:
     print(f"Staging (outside the repository): {staging}")
 
     try:
-        step("Synthetic worker manifest and Level 1 files")
+        step("Synthetic worker manifest and Level 0/Level 1 files")
         manifest, expected = build_staging(staging)
         report.check("synthetic manifest written with the worker's models", manifest.exists())
 
@@ -501,20 +552,21 @@ def main() -> int:
             raise RuntimeError("Next.js did not start")
         check_frontend(report, web, api, staging, items, downloads=True)
 
-        step("Restart FastAPI with original downloads restricted")
+        step("Restart FastAPI with Level 0 withheld and Level 1 permitted")
         stop_process(api_process)
         registry = json.loads(FIXTURE_REGISTRY.read_text(encoding="utf-8"))
         for site in registry["sites"]:
-            site["original_download_permitted"] = False
-        restricted_registry = staging / "sites-registry-restricted.json"
-        restricted_registry.write_text(json.dumps(registry), encoding="utf-8")
+            site["level0_download_permitted"] = False
+            site["level1_download_permitted"] = site["publication_status"] == "public"
+        partial_registry = staging / "sites-registry-level1-only.json"
+        partial_registry.write_text(json.dumps(registry), encoding="utf-8")
         api_process = start_process(
             [sys.executable, "-m", "uvicorn", "auscin_api.main:create_app", "--factory", "--host", "127.0.0.1", "--port", str(api_port)],
-            cwd=API_DIR, env=api_env(staging, manifest, output_root, index, restricted_registry, api), log=logs / "api-restricted.log",
+            cwd=API_DIR, env=api_env(staging, manifest, output_root, index, partial_registry, api), log=logs / "api-level1-only.log",
         )
-        if not report.check("restricted API healthy", wait_for(f"{api}/api/v1/health", api_process, 60)):
-            raise RuntimeError("restricted API did not start")
-        check_restricted_api(report, api)
+        if not report.check("Level-1-only API healthy", wait_for(f"{api}/api/v1/health", api_process, 60)):
+            raise RuntimeError("Level-1-only API did not start")
+        check_partial_policy_api(report, api, expected)
         check_frontend(report, web, api, staging, items, downloads=False)
     except Exception as exc:  # noqa: BLE001 — report and fall through to cleanup
         report.check("workflow completed without an unexpected error", False, f"{type(exc).__name__}: {exc}")

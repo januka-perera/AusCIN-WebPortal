@@ -70,7 +70,7 @@ browsers can't display) is kept in the catalogue but not offered for download.""
 
 DERIVATIVE_CONTENT_TYPE = "image/jpeg"
 
-MediaKind = Literal["original", "preview", "thumbnail"]
+MediaKind = Literal["level0", "level1", "preview", "thumbnail"]
 
 _SOURCE_ID_RE = re.compile(SOURCE_ID_PATTERN)
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -145,23 +145,44 @@ def build_media_id(site_id: str, observation_id: str) -> str:
 # --- Catalogue ------------------------------------------------------------------
 
 
+ProductLevelName = Literal["level0", "level1"]
+
+
+@dataclass(frozen=True)
+class ProductFile:
+    """Trusted metadata for one product level's file, taken from the manifest. Never serialised."""
+
+    relative_path: str
+    """Relative to the media root (the worker's staging directory). Validated at load and never returned."""
+    content_type: Optional[str]
+    """None when the file type isn't in SAFE_IMAGE_CONTENT_TYPES; such files are never served."""
+    file_size: int
+    sha256: str
+    download_permitted: bool
+    """Registry policy for this level only. Never defaults to True, and says nothing about whether the file exists."""
+
+    @property
+    def download_offered(self) -> bool:
+        return self.download_permitted and self.content_type is not None
+
+
 @dataclass(frozen=True)
 class MediaRecord:
     """Trusted internal media metadata. Never serialised into a response."""
 
-    level1_relative_path: str
-    level1_content_type: Optional[str]
-    """None when the Level 1 file type isn't in SAFE_IMAGE_CONTENT_TYPES; such files are never served."""
-    level1_file_size: int
-    level1_sha256: str
+    level0: ProductFile
+    """The untouched source image, exactly as downloaded from Spotteron."""
+    level1: ProductFile
+    """The AusCIN provenance copy: Level 0's image bytes plus embedded provenance XMP."""
     width: Optional[int]
     """Level 1 pixel dimensions as displayed (EXIF orientation applied), from the derivatives index."""
     height: Optional[int]
     thumbnail: Optional[DerivativeFile]
     """Trusted derivative record: relative path (under the derivatives root), size, checksum, dimensions."""
     preview: Optional[DerivativeFile]
-    original_download_permitted: bool
-    """Catalogue policy only (site is public and the registry permits downloads). Says nothing about whether the file exists."""
+
+    def product(self, level: ProductLevelName) -> ProductFile:
+        return self.level0 if level == "level0" else self.level1
 
 
 @dataclass(frozen=True)
@@ -175,10 +196,6 @@ class CatalogueObservation:
     local_date: date
     """Capture date in the site's display time zone — what date filters compare against."""
     media: MediaRecord
-
-    @property
-    def is_original_offered(self) -> bool:
-        return self.media.original_download_permitted and self.media.level1_content_type is not None
 
 
 @dataclass(frozen=True)
@@ -272,7 +289,8 @@ class Catalogue:
         site = self._sites[observation.site_id]
         media = observation.media
         local_label = _long_date(observation.local_date)
-        original_available = self._media_enabled and observation.is_original_offered
+        level0_available = self._media_enabled and media.level0.download_offered
+        level1_available = self._media_enabled and media.level1.download_offered
         return CoastSnapObservationResponse(
             id=observation.media_id,
             site_id=site.site_id,
@@ -296,8 +314,16 @@ class Catalogue:
             preview_url=(
                 self.media_url(observation.media_id, "preview") if self._media_enabled and media.preview else None
             ),
-            is_original_available=original_available,
-            original_url=self.media_url(observation.media_id, "original") if original_available else None,
+            level0_download_available=level0_available,
+            level0_download_url=self.media_url(observation.media_id, "level0") if level0_available else None,
+            # A checksum is public integrity metadata, published only alongside a downloadable file.
+            level0_checksum_sha256=media.level0.sha256 if level0_available else None,
+            level1_download_available=level1_available,
+            level1_download_url=self.media_url(observation.media_id, "level1") if level1_available else None,
+            level1_checksum_sha256=media.level1.sha256 if level1_available else None,
+            # Deprecated: kept for compatibility, and always mirrors Level 1.
+            is_original_available=level1_available,
+            original_url=self.media_url(observation.media_id, "level1") if level1_available else None,
             caption=f"{site.name} — CoastSnap observation, {local_label}",
             alt_text=f"Community photo of {site.name} taken from the CoastSnap alignment mark on {local_label}.",
             is_synthetic=site.is_synthetic,
@@ -375,7 +401,7 @@ def _utc(value: datetime, *, field: str) -> datetime:
     return value.astimezone(timezone.utc)
 
 
-def _level1_content_type(relative_path: str) -> Optional[str]:
+def _servable_content_type(relative_path: str) -> Optional[str]:
     suffix = relative_path.rsplit("/", 1)[-1]
     dot = suffix.rfind(".")
     return SAFE_IMAGE_CONTENT_TYPES.get(suffix[dot:].lower()) if dot > 0 else None
@@ -404,8 +430,10 @@ def build_catalogue(
         if obs.root_id != root_id or entry.site.root_id != root_id:
             raise CatalogueError(f"observation {obs.observation_id!r} does not belong to manifest root_id")
         _validate_entry_paths(entry, root_id)
-        if entry.level1 is not None and not _SHA256_RE.match(entry.level1.checksum.sha256):
-            raise CatalogueError(f"observation {obs.observation_id!r} level1 checksum is not a SHA-256 hex digest")
+        for level_name, product in (("level0", entry.level0), ("level1", entry.level1)):
+            # Each checksum becomes that level's public ETag and published integrity value.
+            if product is not None and not _SHA256_RE.match(product.checksum.sha256):
+                raise CatalogueError(f"observation {obs.observation_id!r} {level_name} checksum is not a SHA-256 hex digest")
 
     level1_by_obs = {e.observation.observation_id: e.level1 for e in manifest.entries}
     derivative_by_obs: dict[str, DerivativeIndexEntry] = {}
@@ -447,15 +475,24 @@ def build_catalogue(
                     ingested_at_utc=_utc(entry.ingested_at_utc, field="ingested_at_utc"),
                     local_date=captured.astimezone(zone).date(),
                     media=MediaRecord(
-                        level1_relative_path=entry.level1.local_relative_path,
-                        level1_content_type=_level1_content_type(entry.level1.local_relative_path),
-                        level1_file_size=entry.level1.file_size_bytes,
-                        level1_sha256=entry.level1.checksum.sha256,
+                        level0=ProductFile(
+                            relative_path=entry.level0.local_relative_path,
+                            content_type=_servable_content_type(entry.level0.local_relative_path),
+                            file_size=entry.level0.file_size_bytes,
+                            sha256=entry.level0.checksum.sha256,
+                            download_permitted=site.level0_download_permitted,
+                        ),
+                        level1=ProductFile(
+                            relative_path=entry.level1.local_relative_path,
+                            content_type=_servable_content_type(entry.level1.local_relative_path),
+                            file_size=entry.level1.file_size_bytes,
+                            sha256=entry.level1.checksum.sha256,
+                            download_permitted=site.level1_download_permitted,
+                        ),
                         width=derivative.source_width if derivative else None,
                         height=derivative.source_height if derivative else None,
                         thumbnail=derivative.thumbnail if derivative else None,
                         preview=derivative.preview if derivative else None,
-                        original_download_permitted=site.original_download_permitted,
                     ),
                 )
             )

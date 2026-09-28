@@ -33,8 +33,8 @@ from the server-side environment:
 
 Both variables are server-side only (never `NEXT_PUBLIC_`). See `.env.example`.
 
-**Media URLs.** Thumbnails, previews and original downloads are loaded by the
-browser directly from the API's `/media/coastsnap/...` endpoints. Every media
+**Media URLs.** Thumbnails, previews and the Level 0 and Level 1 downloads are
+loaded by the browser directly from the API's `/media/coastsnap/...` endpoints. Every media
 URL is resolved against one explicit, browser-reachable media origin:
 `COASTSNAP_MEDIA_ORIGIN`, defaulting to the origin of `COASTSNAP_API_BASE_URL`.
 
@@ -103,9 +103,37 @@ every page consistent. The `/coastsnap` routes always use the runtime value.
 derivatives index recorded them. Otherwise the detail page shows "Not
 recorded".
 
+**Downloads (Level 0 and Level 1).** For API records, the detail page's "Data
+access" section renders one explicit action per permitted product level,
+using only the per-level fields `levelNDownloadAvailable`,
+`levelNDownloadUrl` and `levelNChecksumSha256`:
+
+- **Download original (Level 0)**: the untouched source image, exactly as
+  contributed through Spotteron.
+- **Download provenance copy (Level 1)**: the same image with AusCIN
+  provenance metadata embedded.
+
+How the section behaves:
+
+- **Checksum:** each action shows its published SHA-256.
+- **One level permitted:** only that action appears, with a line explaining
+  that the other level isn't offered.
+- **Neither level permitted:** the explicit processing, failed, restricted
+  or unavailable state is shown instead.
+- **URLs:** download links are plain anchors to the media origin. A level
+  counts as available only if its URL passes validation.
+
+The deprecated `isOriginalAvailable` / `originalUrl` fields are derived from
+Level 1 in the HTTP repository and not used for API records. Sample data
+keeps its single, clearly labelled "Download original (prototype demo)".
+Rendering lives in `components/coastsnap/download-actions.tsx`, and the logic
+in `getCoastSnapDownloadView` (`lib/coastsnap-presentation.ts`). Both are
+unit-tested, including rendered markup for each permission combination.
+
 **End-to-end check.** `scripts/coastsnap_e2e_smoke.py` builds this app, runs
 `next start` against a FastAPI catalogue fed by worker-generated derivatives,
-and verifies the CoastSnap pages, preview and download. See "Local end-to-end
+and verifies the CoastSnap pages, preview, and both download levels (with
+both permitted, and with only Level 1 permitted). See "Local end-to-end
 workflow" in `apps/api/README.md`.
 
 ## Learn More

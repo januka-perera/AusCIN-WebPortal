@@ -22,9 +22,15 @@ Rules:
   - latitude and longitude must be in range
   - the time zone must be a valid IANA name
   - the establishment date must not be in the future
-- **Explicit decisions:** publication status and download permission must be
-  set explicitly (`true`/`false`). Nothing defaults to public or
-  downloadable, so no site is published or made downloadable automatically.
+- **Explicit decisions:** publication status and the download permission for
+  each product level must be set explicitly:
+  - `COASTSNAP_SITE_LEVEL0_DOWNLOAD_PERMITTED`: the untouched source image
+  - `COASTSNAP_SITE_LEVEL1_DOWNLOAD_PERMITTED`: the AusCIN provenance copy
+
+  Each must be exactly `true` or `false`. Nothing defaults to public or
+  downloadable, so no site or level is published or made downloadable
+  automatically. The retired single `COASTSNAP_SITE_DOWNLOAD_PERMITTED` is
+  refused with a pointer to the two replacements.
 - **Local paths:** staging directory, derivatives root, manifest and
   derivatives index must be absolute, outside this repository and never
   under `/g/data`, because they are always local. The manifest must be the
@@ -71,8 +77,15 @@ SITE_FIELDS = (
     "COASTSNAP_SITE_ESTABLISHED_SINCE",
     "COASTSNAP_SITE_ATTRIBUTION_TEXT",
     "COASTSNAP_SITE_PUBLICATION_STATUS",
-    "COASTSNAP_SITE_DOWNLOAD_PERMITTED",
+    "COASTSNAP_SITE_LEVEL0_DOWNLOAD_PERMITTED",
+    "COASTSNAP_SITE_LEVEL1_DOWNLOAD_PERMITTED",
 )
+RETIRED_FIELDS = {
+    "COASTSNAP_SITE_DOWNLOAD_PERMITTED": (
+        "has been replaced by COASTSNAP_SITE_LEVEL0_DOWNLOAD_PERMITTED and COASTSNAP_SITE_LEVEL1_DOWNLOAD_PERMITTED; "
+        "remove it and set both levels explicitly"
+    ),
+}
 PATH_FIELDS = (
     "COASTSNAP_STAGING_DIR",
     "COASTSNAP_DERIVATIVES_ROOT",
@@ -179,6 +192,10 @@ def validate_site_config(
     repo_roots = repository_roots if repository_roots is not None else find_repository_roots()
     required = REQUIRED_FIELDS + (TRANSFER_FIELDS if for_transfer else ())
 
+    for name, message in RETIRED_FIELDS.items():
+        if isinstance(env.get(name), str) and env[name].strip():
+            report.fail(name, message)
+
     values: dict[str, str] = {}
     for name in ALL_FIELDS:
         raw = env.get(name)
@@ -283,9 +300,10 @@ def _validate_policy(values: dict[str, str], report: ValidationReport) -> None:
     status = values.get("COASTSNAP_SITE_PUBLICATION_STATUS")
     if status is not None and status not in get_args(PublicationStatus):
         report.fail("COASTSNAP_SITE_PUBLICATION_STATUS", f"must be one of {', '.join(get_args(PublicationStatus))}")
-    permitted = values.get("COASTSNAP_SITE_DOWNLOAD_PERMITTED")
-    if permitted is not None and permitted not in ("true", "false"):
-        report.fail("COASTSNAP_SITE_DOWNLOAD_PERMITTED", "must be exactly 'true' or 'false' (an explicit, reviewed decision)")
+    for name in ("COASTSNAP_SITE_LEVEL0_DOWNLOAD_PERMITTED", "COASTSNAP_SITE_LEVEL1_DOWNLOAD_PERMITTED"):
+        permitted = values.get(name)
+        if permitted is not None and permitted not in ("true", "false"):
+            report.fail(name, "must be exactly 'true' or 'false' (an explicit, reviewed decision for this product level)")
 
 
 def _validate_local_paths(values: dict[str, str], report: ValidationReport, repo_roots: list[Path]) -> None:
@@ -364,7 +382,8 @@ def build_registry(values: Mapping[str, str]) -> SiteRegistry:
                     "status": "active",
                     "established_since": values["COASTSNAP_SITE_ESTABLISHED_SINCE"].strip(),
                     "publication_status": values["COASTSNAP_SITE_PUBLICATION_STATUS"].strip(),
-                    "original_download_permitted": values["COASTSNAP_SITE_DOWNLOAD_PERMITTED"].strip() == "true",
+                    "level0_download_permitted": values["COASTSNAP_SITE_LEVEL0_DOWNLOAD_PERMITTED"].strip() == "true",
+                    "level1_download_permitted": values["COASTSNAP_SITE_LEVEL1_DOWNLOAD_PERMITTED"].strip() == "true",
                     "attribution_text": values["COASTSNAP_SITE_ATTRIBUTION_TEXT"].strip(),
                     "is_synthetic": False,
                 }
@@ -395,6 +414,9 @@ def _print_report(report: ValidationReport, out) -> None:
                 print(f"[FAIL] {name} {message}", file=out)
         else:
             print(f"[ OK ] {name}", file=out)
+    for name in RETIRED_FIELDS:
+        for message in report.errors.get(name, []):
+            print(f"[FAIL] {name} {message}", file=out)
     for note in report.notes:
         print(f"[NOTE] {note}", file=out)
     print(
@@ -451,8 +473,9 @@ def main(argv: Optional[list[str]] = None, environ: Optional[Mapping[str, str]] 
     print(
         f"\nWrote {output.name} for {site.site_id}. Review it before starting the API:\n"
         f"  publication_status          = {site.publication_status}\n"
-        f"  original_download_permitted = {str(site.original_download_permitted).lower()}\n"
-        "Both come only from your explicit settings; nothing is published or made downloadable by default.",
+        f"  level0_download_permitted   = {str(site.level0_download_permitted).lower()}  (untouched source image)\n"
+        f"  level1_download_permitted   = {str(site.level1_download_permitted).lower()}  (AusCIN provenance copy)\n"
+        "All three come only from your explicit settings; nothing is published or made downloadable by default.",
         file=out,
     )
     return 0

@@ -2,16 +2,11 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Button } from "@/components/ui/button";
+import { CoastSnapDownloadActions } from "@/components/coastsnap/download-actions";
 import { MetadataList } from "@/components/ui/metadata-list";
 import { StatusLabel } from "@/components/ui/status-label";
 import { coastSnapRepository, getCoastSnapDataSource } from "@/data";
-import {
-  describeUnavailableDownload,
-  getCoastSnapDownloadState,
-  getRecordNotice,
-  SAMPLE_RECORD_NOTICE,
-} from "@/lib/coastsnap-presentation";
+import { getCoastSnapDownloadView, getRecordNotice, SAMPLE_RECORD_NOTICE } from "@/lib/coastsnap-presentation";
 import {
   formatCoordinates,
   formatLocalDate,
@@ -63,11 +58,7 @@ export default async function CoastSnapMediaDetailPage({
 
   const source = getCoastSnapDataSource();
   const notice = getRecordNotice(source, observation.isSynthetic);
-  const downloadState = getCoastSnapDownloadState(source, observation);
-  const unavailableDownload =
-    downloadState === "available" || downloadState === "sample-demo"
-      ? null
-      : describeUnavailableDownload(source, downloadState);
+  const downloadView = getCoastSnapDownloadView(source, observation);
   // A browser-sized preview, falling back to the thumbnail. Never the original file.
   const previewSrc = observation.previewUrl ?? observation.thumbnailUrl;
   const previewAvailability = getPreviewAvailability(observation);
@@ -164,29 +155,7 @@ export default async function CoastSnapMediaDetailPage({
 
           <h2 className="mt-8 font-display text-heading-md text-foreground">Data access</h2>
           <div className="mt-3">
-            {downloadState === "available" && observation.originalUrl ? (
-              <>
-                <Button href={observation.originalUrl}>Download original</Button>
-                <p className="mt-2 max-w-sm text-small text-muted">
-                  The full-resolution photo file, with AusCIN provenance metadata embedded.
-                </p>
-              </>
-            ) : downloadState === "sample-demo" && observation.originalUrl ? (
-              <>
-                <Button href={observation.originalUrl}>Download original (prototype demo)</Button>
-                <p className="mt-2 max-w-sm text-small text-muted">
-                  This is a local placeholder file used to demonstrate the download-available
-                  state, not a real CoastSnap photo or a production download.
-                </p>
-              </>
-            ) : (
-              unavailableDownload && (
-                <>
-                  <StatusLabel label={unavailableDownload.label} tone="neutral" />
-                  <p className="mt-2 max-w-sm text-small text-muted">{unavailableDownload.description}</p>
-                </>
-              )
-            )}
+            <CoastSnapDownloadActions view={downloadView} />
           </div>
 
           <div className="mt-4">

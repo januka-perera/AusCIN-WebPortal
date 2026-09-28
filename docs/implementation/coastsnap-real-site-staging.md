@@ -37,12 +37,19 @@ steps 5–10 is `scripts/coastsnap_e2e_smoke.py`.
   first real batch. Widen only after steps 4–10 have been reviewed.
 - **Keep all local paths outside the git checkout, and never under
   `/g/data`.** The validator enforces this.
-- **Publication is an explicit decision.** Start with
-  `COASTSNAP_SITE_PUBLICATION_STATUS=embargoed` and
-  `COASTSNAP_SITE_DOWNLOAD_PERMITTED=false`. Change them only after review:
+- **Publication and each download level are explicit decisions.** Start with
+  `COASTSNAP_SITE_PUBLICATION_STATUS=embargoed`,
+  `COASTSNAP_SITE_LEVEL0_DOWNLOAD_PERMITTED=false` and
+  `COASTSNAP_SITE_LEVEL1_DOWNLOAD_PERMITTED=false`. Change them only after
+  review:
   - the API serves only `public` sites
-  - the validator requires both values to be set explicitly
+  - the validator requires all three values to be set explicitly, and
+    refuses the retired single `COASTSNAP_SITE_DOWNLOAD_PERMITTED`
   - nothing defaults to public or downloadable
+  - Level 0 (the untouched source image) and Level 1 (the AusCIN provenance
+    copy) are permitted independently; neither implies the other
+  - for the private staging preview, enable a level only deliberately, for
+    example to review both downloads in step 9
 - **Run step 11 (`--transfer`) only after steps 1–10 have been reviewed,**
   and only with explicit `--confirm-production-remote-root` if the remote
   root is under `/g/data/qu34`.
@@ -229,7 +236,7 @@ export COASTSNAP_API_BASE_URL="http://127.0.0.1:8000"
 npm ci && npm run build && npm run start -- -H 127.0.0.1 -p 3000
 ```
 
-## 9. Browse the archive and download one image
+## 9. Browse the archive and download each permitted level
 
 - Open `http://localhost:3000/coastsnap`, then `/coastsnap/<COASTSNAP_SITE_SLUG>/archive`.
 - Check the following:
@@ -237,25 +244,40 @@ npm ci && npm run build && npm run start -- -H 127.0.0.1 -p 3000
   - capture times display in the site's time zone
   - the credit line shows only the configured attribution text
   - no contributor names, raw Spotteron IDs or file paths appear
-- With `COASTSNAP_SITE_DOWNLOAD_PERMITTED=true`, the detail page shows
-  **Download original**. Otherwise it shows "Original unavailable".
-- Download one original, either from the page or directly:
+- The detail page shows one button per permitted level:
+  - **Download original (Level 0)**: the untouched source image
+  - **Download provenance copy (Level 1)**: the image with AusCIN
+    provenance metadata
+
+  If only one level is permitted, only that button appears, with a line
+  explaining that the other isn't offered. If neither is permitted, the page
+  shows "Original unavailable".
+- Download each permitted level, either from the page or directly:
 
 ```bash
 curl -s "http://127.0.0.1:8000/api/v1/coastsnap/sites/<COASTSNAP_SITE_SLUG>/observations?pageSize=5" | python -m json.tool
-curl -sS -D - -o "$HOME/auscin-site/download.jpg" "http://127.0.0.1:8000/media/coastsnap/<MEDIA_ID>/original" | grep -i -E "content-disposition|etag"
+curl -sS -D - -o "$HOME/auscin-site/download-level0.jpg" "http://127.0.0.1:8000/media/coastsnap/<MEDIA_ID>/level0" | grep -i -E "content-disposition|etag"
+curl -sS -D - -o "$HOME/auscin-site/download-level1.jpg" "http://127.0.0.1:8000/media/coastsnap/<MEDIA_ID>/level1" | grep -i -E "content-disposition|etag"
 ```
 
-## 10. Compare the downloaded SHA-256 with the manifest
+`/original` still works as a deprecated alias for `/level1`, but don't use it
+in new commands.
+
+## 10. Compare each downloaded SHA-256 with the manifest
 
 ```bash
-HASH=$(sha256sum "$HOME/auscin-site/download.jpg" | cut -d' ' -f1)
-echo "$HASH"
-grep -c "\"$HASH\"" "$COASTSNAP_MANIFEST_PATH"   # must print 1 (the Level 1 checksum of that observation)
+for level in level0 level1; do
+  HASH=$(sha256sum "$HOME/auscin-site/download-$level.jpg" | cut -d' ' -f1)
+  echo "$level $HASH"
+  grep -c "\"$HASH\"" "$COASTSNAP_MANIFEST_PATH"   # before any transfer, must print 1 (that level's checksum for the observation)
+done
 ```
 
 This is independent of the API: it hashes the bytes the browser would
-receive and looks them up in the worker's own manifest.
+receive and looks them up in the worker's own manifest. The two hashes must
+differ, because Level 1 carries embedded provenance metadata. After a
+transfer, a checksum also appears as the recorded remote checksum, so expect
+2 then.
 
 ## 11. Only after review: SFTP transfer
 

@@ -14,7 +14,8 @@
       "status": "active",
       "established_since": "2026-07-01",
       "publication_status": "public",
-      "original_download_permitted": true,
+      "level0_download_permitted": true,
+      "level1_download_permitted": true,
       "attribution_text": "CoastSnap community photo (synthetic test data)",
       "is_synthetic": true
     },
@@ -31,7 +32,8 @@
       "status": "active",
       "established_since": "2026-07-01",
       "publication_status": "embargoed",
-      "original_download_permitted": false,
+      "level0_download_permitted": false,
+      "level1_download_permitted": false,
       "attribution_text": "CoastSnap community photo (synthetic test data)",
       "is_synthetic": true
     }

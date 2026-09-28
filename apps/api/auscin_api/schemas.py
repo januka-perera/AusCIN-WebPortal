@@ -9,9 +9,16 @@ Spotteron identifier.
 Contract notes for this milestone (additive or deferred relative to the
 frontend types — see apps/api/README.md):
 
-- `thumbnailUrl`, `previewUrl` and `originalUrl` are API media URLs
-  (`/media/coastsnap/{mediaId}/...`) when that media is available and
-  permitted, otherwise null. `representativeImageUrl` is always null.
+- `thumbnailUrl`, `previewUrl`, `level0DownloadUrl` and `level1DownloadUrl`
+  are API media URLs (`/media/coastsnap/{mediaId}/...`) when that media is
+  available and permitted, otherwise null. `representativeImageUrl` is
+  always null.
+- Downloads are split by product level. Level 0 is the untouched source
+  image; Level 1 is the AusCIN provenance copy. Each level has its own URL,
+  availability flag and SHA-256 checksum. A checksum is published only when
+  that level is downloadable.
+- `isOriginalAvailable` and `originalUrl` are DEPRECATED compatibility fields
+  that mirror Level 1.
 - `capturedAtSourceRaw` and `ingestedAtUtc` are additive fields preserving
   the worker's source timestamp and ingestion time.
 - `width` and `height` are the Level 1 pixel dimensions as displayed (EXIF
@@ -61,8 +68,10 @@ class RegistrySite(BaseModel):
     status: OperatingStatus
     established_since: date
     publication_status: PublicationStatus
-    original_download_permitted: bool = False
-    """Whether visitors may download the original (currently Level 1 — provisional policy). Only effective for public sites."""
+    level0_download_permitted: bool = False
+    """Whether visitors may download Level 0, the untouched source image. Only effective for public sites; never defaults to True."""
+    level1_download_permitted: bool = False
+    """Whether visitors may download Level 1, the AusCIN provenance copy. Only effective for public sites; never defaults to True."""
     attribution_text: str = Field(min_length=1)
     is_synthetic: bool
 
@@ -143,8 +152,18 @@ class CoastSnapObservationResponse(ApiModel):
     publication_status: PublicationStatus
     thumbnail_url: Optional[str] = None
     preview_url: Optional[str] = None
+    level0_download_url: Optional[str] = None
+    level1_download_url: Optional[str] = None
+    level0_download_available: bool = False
+    level1_download_available: bool = False
+    level0_checksum_sha256: Optional[str] = None
+    """Published only when the Level 0 download is available."""
+    level1_checksum_sha256: Optional[str] = None
+    """Published only when the Level 1 download is available."""
     is_original_available: bool = False
+    """DEPRECATED. Mirrors level1DownloadAvailable. Use the per-level fields."""
     original_url: Optional[str] = None
+    """DEPRECATED. Mirrors level1DownloadUrl. Use the per-level fields."""
     caption: str
     alt_text: str
     is_synthetic: bool

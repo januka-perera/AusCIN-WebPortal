@@ -4,10 +4,18 @@ Files are located only through the catalogue's trusted `MediaRecord`. The
 request supplies an opaque media ID and nothing else, and no request value
 ever reaches the filesystem.
 
-The download policy is provisional: `original` serves the **Level 1** product,
-which is the Level 0 image bytes plus embedded AusCIN provenance metadata. Whether
-the public download should be Level 0 or Level 1 is still an open decision. See
-docs/implementation/coastsnap-single-site-publication.md.
+Downloads are explicit about product level:
+
+- `/level0` serves the untouched source image, exactly as downloaded from
+  Spotteron.
+- `/level1` serves the AusCIN provenance copy: Level 0's image bytes plus
+  embedded provenance XMP.
+
+Each level has its own registry permission (`level0_download_permitted`,
+`level1_download_permitted`, both defaulting to false), its own ETag (that
+level's manifest checksum) and an opaque `<media_id>_<level>.<ext>` filename.
+`/original` is a DEPRECATED alias for `/level1`, kept temporarily for
+compatibility.
 
 Previews and thumbnails never fall back to the original. A missing rendition
 is a 404, not a silent substitution of a much larger file.
@@ -22,7 +30,7 @@ from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import FileResponse
 
-from ..catalogue import DERIVATIVE_CONTENT_TYPE, Catalogue, CatalogueObservation
+from ..catalogue import DERIVATIVE_CONTENT_TYPE, Catalogue, CatalogueObservation, ProductLevelName
 from ..errors import download_not_permitted, media_not_found, media_unavailable, rendition_not_available
 from ..media_store import MediaStore, MediaUnavailableError
 from ..schemas import ErrorResponse
@@ -62,6 +70,17 @@ MediaStoreDep = Annotated[Optional[MediaStore], Depends(get_media_store)]
 DerivativesStoreDep = Annotated[Optional[MediaStore], Depends(get_derivatives_store)]
 
 
+def media_route(path: str, *, deprecated: bool = False):
+    """Registers a handler for GET and HEAD. HEAD is registered separately and kept out of the OpenAPI
+    schema, because a single GET+HEAD route gives both methods the same operation ID, which is invalid OpenAPI."""
+
+    def register(handler):
+        router.head(path, include_in_schema=False)(handler)
+        return router.get(path, responses=ERRORS, deprecated=deprecated or None)(handler)
+
+    return register
+
+
 def _lookup(catalogue: Catalogue, media_id: str) -> CatalogueObservation:
     observation = catalogue.get_media(media_id)
     if observation is None:
@@ -79,27 +98,52 @@ def _resolve(store: Optional[MediaStore], relative_path: str) -> Path:
         raise media_unavailable() from exc
 
 
-@router.api_route("/{media_id}/original", methods=["GET", "HEAD"], responses=ERRORS)
-def get_original(media_id: str, catalogue: CatalogueDep, store: MediaStoreDep) -> FileResponse:
+def _product_download(
+    catalogue: Catalogue, store: Optional[MediaStore], media_id: str, level: ProductLevelName,
+    extra_headers: Optional[dict[str, str]] = None,
+) -> FileResponse:
     observation = _lookup(catalogue, media_id)
-    media = observation.media
-    if not media.original_download_permitted:
-        raise download_not_permitted()
-    if media.level1_content_type is None:
-        raise rendition_not_available("original")
-    path = _resolve(store, media.level1_relative_path)
-    # The ETag is the catalogue checksum, so a file that has changed on disk must not be served under it.
-    # A size check is cheap. Re-hashing large files on every request is not, so a changed file of the
-    # same size is not detected here; the worker's checksum verification is the control for that.
-    if path.stat().st_size != media.level1_file_size:
+    product = observation.media.product(level)
+    # Each level has its own registry permission; neither implies the other.
+    if not product.download_permitted:
+        raise download_not_permitted(level)
+    if product.content_type is None:
+        raise rendition_not_available(level)
+    path = _resolve(store, product.relative_path)
+    # The ETag is this level's catalogue checksum, so a file that has changed on disk must not be served
+    # under it. A size check is cheap. Re-hashing large files on every request is not, so a changed file
+    # of the same size is not detected here; the worker's checksum verification is the control for that.
+    if path.stat().st_size != product.file_size:
         logger.warning("Media file size does not match the catalogue record")
         raise media_unavailable()
     return FileResponse(
         path,
-        media_type=media.level1_content_type,
-        filename=f"{observation.media_id}{_EXTENSION_FOR_CONTENT_TYPE[media.level1_content_type]}",
+        media_type=product.content_type,
+        filename=f"{observation.media_id}_{level}{_EXTENSION_FOR_CONTENT_TYPE[product.content_type]}",
         content_disposition_type="attachment",
-        headers={**_COMMON_HEADERS, "ETag": f'"{media.level1_sha256}"'},
+        headers={**_COMMON_HEADERS, "ETag": f'"{product.sha256}"', **(extra_headers or {})},
+    )
+
+
+@media_route("/{media_id}/level0")
+def get_level0(media_id: str, catalogue: CatalogueDep, store: MediaStoreDep) -> FileResponse:
+    """Level 0: the untouched source image, exactly as downloaded from Spotteron."""
+    return _product_download(catalogue, store, media_id, "level0")
+
+
+@media_route("/{media_id}/level1")
+def get_level1(media_id: str, catalogue: CatalogueDep, store: MediaStoreDep) -> FileResponse:
+    """Level 1: the AusCIN provenance copy (Level 0's image bytes plus embedded provenance XMP)."""
+    return _product_download(catalogue, store, media_id, "level1")
+
+
+@media_route("/{media_id}/original", deprecated=True)
+def get_original(media_id: str, catalogue: CatalogueDep, store: MediaStoreDep) -> FileResponse:
+    """DEPRECATED compatibility alias for `/level1`. It serves exactly the Level 1 response, with the same
+    permission, ETag and filename, plus headers pointing clients at the successor endpoint."""
+    return _product_download(
+        catalogue, store, media_id, "level1",
+        extra_headers={"Deprecation": "true", "Link": f'</media/coastsnap/{media_id}/level1>; rel="successor-version"'},
     )
 
 
@@ -121,11 +165,11 @@ def _derivative(catalogue: Catalogue, store: Optional[MediaStore], media_id: str
     )
 
 
-@router.api_route("/{media_id}/preview", methods=["GET", "HEAD"], responses=ERRORS)
+@media_route("/{media_id}/preview")
 def get_preview(media_id: str, catalogue: CatalogueDep, store: DerivativesStoreDep) -> FileResponse:
     return _derivative(catalogue, store, media_id, "preview")
 
 
-@router.api_route("/{media_id}/thumbnail", methods=["GET", "HEAD"], responses=ERRORS)
+@media_route("/{media_id}/thumbnail")
 def get_thumbnail(media_id: str, catalogue: CatalogueDep, store: DerivativesStoreDep) -> FileResponse:
     return _derivative(catalogue, store, media_id, "thumbnail")
