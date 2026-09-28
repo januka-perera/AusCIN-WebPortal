@@ -18,7 +18,7 @@ from conftest import (
     PUBLIC_SITE_ID,
     fixture_settings,
 )
-from synthetic_media import derivative_bytes, level_bytes
+from synthetic_media import build_media_root, derivative_bytes, level_bytes
 
 MEDIA = "/media/coastsnap"
 
@@ -186,7 +186,7 @@ def test_derivative_urls_are_null_when_not_generated(client):
 
 
 def test_recorded_derivative_missing_on_disk_is_503(client, media_root, derivatives_data):
-    relative = derivatives_data["derivatives"][0]["preview_relative_path"]
+    relative = derivatives_data["derivatives"][0]["preview"]["relative_path"]
     media_file(media_root, relative).unlink()
     response = client.get(f"{MEDIA}/{media_id('TEST_OBS_0001')}/preview")
     assert response.status_code == 503
@@ -294,3 +294,43 @@ def test_catalogue_json_contains_no_media_paths(client, media_root):
         assert forbidden not in body
     for internal_field in ("relativePath", "relative_path", "sha256", "fileSize", "level1"):
         assert internal_field not in body
+
+
+# --- Derivative integrity and separate derivatives root -----------------------------------
+
+
+@pytest.mark.parametrize("kind", ["preview", "thumbnail"])
+def test_derivative_etag_is_index_checksum(client, derivatives_data, kind):
+    recorded = derivatives_data["derivatives"][0][kind]
+    response = client.get(f"{MEDIA}/{media_id('TEST_OBS_0001')}/{kind}")
+    assert response.headers["etag"] == f'"{recorded["sha256"]}"'
+    assert hashlib.sha256(response.content).hexdigest() == recorded["sha256"]
+    assert int(response.headers["content-length"]) == recorded["file_size_bytes"]
+
+
+def test_derivative_with_size_mismatch_is_503(client, media_root, derivatives_data):
+    relative = derivatives_data["derivatives"][0]["thumbnail"]["relative_path"]
+    media_file(media_root, relative).write_bytes(b"tampered")
+    response = client.get(f"{MEDIA}/{media_id('TEST_OBS_0001')}/thumbnail")
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "media_unavailable"
+
+
+def test_separate_derivatives_root(tmp_path):
+    level1_root = tmp_path / "staging"
+    derivatives_root = tmp_path / "derivatives-out"
+    build_media_root(level1_root, MANIFEST_PATH, DERIVATIVES_INDEX_PATH, derivatives_root=derivatives_root)
+    assert not (level1_root / "derivatives").exists()
+    app_client = TestClient(create_app(fixture_settings(media_root=level1_root, derivatives_root=derivatives_root)))
+    mid = media_id("TEST_OBS_0001")
+    assert app_client.get(f"{MEDIA}/{mid}/thumbnail").content == derivative_bytes("TEST_OBS_0001", "thumbnail")
+    assert app_client.get(f"{MEDIA}/{mid}/original").content == level_bytes("TEST_OBS_0001", 1)
+
+
+def test_derivatives_are_never_resolved_from_the_level1_root_when_a_separate_root_is_set(tmp_path):
+    # Derivatives exist only under the Level 1 root; the configured derivatives root is empty.
+    level1_root = build_media_root(tmp_path / "staging", MANIFEST_PATH, DERIVATIVES_INDEX_PATH)
+    empty = tmp_path / "empty-derivatives"
+    empty.mkdir()
+    app_client = TestClient(create_app(fixture_settings(media_root=level1_root, derivatives_root=empty)))
+    assert app_client.get(f"{MEDIA}/{media_id('TEST_OBS_0001')}/thumbnail").status_code == 503

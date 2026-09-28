@@ -38,7 +38,10 @@ class Settings:
     derivatives_index_path: Optional[Path] = None
     """Optional thumbnail/preview index. Without it, no derivative URLs are offered."""
     media_root: Optional[Path] = None
-    """Local directory that the manifest's and index's relative paths resolve beneath. Without it, no media is served."""
+    """Local directory that the manifest's Level 1 paths resolve beneath. Without it, no media is served."""
+    derivatives_root: Optional[Path] = None
+    """Local directory that the derivatives index's paths resolve beneath (the worker's --output-root).
+    Defaults to media_root."""
     media_base_url: str = ""
     """Prefix for media URLs in JSON, e.g. "http://localhost:8000". Empty means root-relative URLs."""
 
@@ -52,11 +55,14 @@ class Settings:
             ("COASTSNAP_MANIFEST_PATH", self.manifest_path),
             ("COASTSNAP_DERIVATIVES_INDEX_PATH", self.derivatives_index_path),
             ("COASTSNAP_MEDIA_ROOT", self.media_root),
+            ("COASTSNAP_DERIVATIVES_ROOT", self.derivatives_root),
         ):
             if path is not None and self.environment != "production" and _is_under_production_storage(path):
                 raise SettingsError(
                     f"{name} points under {PRODUCTION_STORAGE_PREFIX}, which is never read outside production."
                 )
+        if self.derivatives_root is not None and self.media_root is None:
+            raise SettingsError("COASTSNAP_DERIVATIVES_ROOT requires COASTSNAP_MEDIA_ROOT to be set as well.")
         if self.media_base_url:
             parsed = urlparse(self.media_base_url)
             if parsed.scheme not in ("http", "https") or not parsed.netloc or parsed.path not in ("", "/") \
@@ -84,5 +90,6 @@ class Settings:
             manifest_path=_required_path("COASTSNAP_MANIFEST_PATH"),
             derivatives_index_path=_optional_path("COASTSNAP_DERIVATIVES_INDEX_PATH"),
             media_root=_optional_path("COASTSNAP_MEDIA_ROOT"),
+            derivatives_root=_optional_path("COASTSNAP_DERIVATIVES_ROOT"),
             media_base_url=(source.get("AUSCIN_MEDIA_BASE_URL") or "").strip(),
         )

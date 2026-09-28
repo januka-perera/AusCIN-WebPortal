@@ -90,37 +90,10 @@ class SiteRegistry(BaseModel):
         return self
 
 
-# --- Derivatives index (input) -------------------------------------------------
-#
-# Provisional format for thumbnails/previews until the worker's derivatives
-# step exists (see docs/implementation/coastsnap-single-site-publication.md).
-# One index per manifest root_id; paths are relative to the media root.
-
-
-class DerivativeEntry(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    observation_id: str = Field(pattern=SOURCE_ID_PATTERN)
-    width: Optional[int] = Field(default=None, ge=1)
-    """Pixel width of the original image, when known."""
-    height: Optional[int] = Field(default=None, ge=1)
-    thumbnail_relative_path: Optional[str] = None
-    preview_relative_path: Optional[str] = None
-
-
-class DerivativesIndex(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    schema_version: Literal[1]
-    root_id: str = Field(pattern=SOURCE_ID_PATTERN)
-    derivatives: list[DerivativeEntry]
-
-    @model_validator(mode="after")
-    def _unique_observations(self) -> "DerivativesIndex":
-        ids = [item.observation_id for item in self.derivatives]
-        if len(set(ids)) != len(ids):
-            raise ValueError("duplicate observation_id in derivatives index")
-        return self
+# The derivatives index is parsed with the worker's own model
+# (coastsnap_import.derivatives.DerivativesIndex, schema_version 2), exactly as
+# the manifest is. The catalogue adds the API-side checks: identifiers, uniqueness,
+# path safety and source-checksum staleness.
 
 
 # --- API responses -------------------------------------------------------------

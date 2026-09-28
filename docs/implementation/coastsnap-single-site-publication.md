@@ -18,7 +18,16 @@ Status: **in progress.** Date: 2026-09-28.
   - Derivatives come from a provisional derivatives index until worker step 3
     exists.
   - HTTP Range requests are supported natively by Starlette's `FileResponse`.
-- Steps 3–6 are not started.
+- Step 3 (worker derivatives) is implemented as a separate command,
+  `python -m coastsnap_import.derivatives`, using Pillow via the worker's
+  optional `derivatives` extra.
+  - It verifies each Level 1 checksum, then writes metadata-free thumbnail
+    (≤ 400 px) and preview (≤ 1600 px) JPEGs, and a version-2 derivatives
+    index that the API parses with the worker's own model.
+  - The API gained an optional `COASTSNAP_DERIVATIVES_ROOT`, checksum ETags
+    for derivatives, and a rule that drops stale index entries. Its public
+    URLs and JSON shape are unchanged.
+- Steps 4–6 are not started.
 
 ## Objective
 

@@ -53,8 +53,13 @@ def get_media_store(request: Request) -> Optional[MediaStore]:
     return request.app.state.media_store
 
 
+def get_derivatives_store(request: Request) -> Optional[MediaStore]:
+    return request.app.state.derivatives_store
+
+
 CatalogueDep = Annotated[Catalogue, Depends(get_catalogue)]
 MediaStoreDep = Annotated[Optional[MediaStore], Depends(get_media_store)]
+DerivativesStoreDep = Annotated[Optional[MediaStore], Depends(get_derivatives_store)]
 
 
 def _lookup(catalogue: Catalogue, media_id: str) -> CatalogueObservation:
@@ -100,22 +105,27 @@ def get_original(media_id: str, catalogue: CatalogueDep, store: MediaStoreDep) -
 
 def _derivative(catalogue: Catalogue, store: Optional[MediaStore], media_id: str, kind: str) -> FileResponse:
     observation = _lookup(catalogue, media_id)
-    relative_path = (
-        observation.media.preview_relative_path if kind == "preview" else observation.media.thumbnail_relative_path
-    )
-    if relative_path is None:
+    rendition = observation.media.preview if kind == "preview" else observation.media.thumbnail
+    if rendition is None:
         raise rendition_not_available(kind)
-    path = _resolve(store, relative_path)
-    # Served inline with no Content-Disposition filename. Starlette's
-    # default ETag is based on mtime and size and reveals no path.
-    return FileResponse(path, media_type=DERIVATIVE_CONTENT_TYPE, headers=_COMMON_HEADERS)
+    path = _resolve(store, rendition.relative_path)
+    # Same guard as the original: never serve a changed file under the worker-recorded checksum ETag.
+    if path.stat().st_size != rendition.file_size_bytes:
+        logger.warning("Derivative file size does not match the derivatives index")
+        raise media_unavailable()
+    # Served inline with no Content-Disposition filename.
+    return FileResponse(
+        path,
+        media_type=DERIVATIVE_CONTENT_TYPE,
+        headers={**_COMMON_HEADERS, "ETag": f'"{rendition.sha256}"'},
+    )
 
 
 @router.api_route("/{media_id}/preview", methods=["GET", "HEAD"], responses=ERRORS)
-def get_preview(media_id: str, catalogue: CatalogueDep, store: MediaStoreDep) -> FileResponse:
+def get_preview(media_id: str, catalogue: CatalogueDep, store: DerivativesStoreDep) -> FileResponse:
     return _derivative(catalogue, store, media_id, "preview")
 
 
 @router.api_route("/{media_id}/thumbnail", methods=["GET", "HEAD"], responses=ERRORS)
-def get_thumbnail(media_id: str, catalogue: CatalogueDep, store: MediaStoreDep) -> FileResponse:
+def get_thumbnail(media_id: str, catalogue: CatalogueDep, store: DerivativesStoreDep) -> FileResponse:
     return _derivative(catalogue, store, media_id, "thumbnail")

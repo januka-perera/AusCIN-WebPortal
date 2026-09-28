@@ -16,9 +16,19 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Pillow is needed ONLY by the separate thumbnail/preview command
+# (python -m coastsnap_import.derivatives), which must decode Level 1
+# images to downscale them. The importer itself (--plan-only,
+# --process-local, --transfer) never decodes an image — Level 0/1 are
+# byte copies with metadata embedded by ExifTool — so Pillow is kept
+# out of the core dependencies.
+derivatives = [
+    "pillow>=10.3,<13",
+]
 dev = [
     "pytest>=8,<9",
     "responses>=0.25,<1",
+    "pillow>=10.3,<13",
 ]
 
 [project.scripts]

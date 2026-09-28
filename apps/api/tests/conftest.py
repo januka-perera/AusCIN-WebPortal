@@ -45,6 +45,7 @@ def fixture_settings(
     derivatives_index: Path | None = DERIVATIVES_INDEX_PATH,
     media_root: Path | None = None,
     media_base_url: str = "",
+    derivatives_root: Path | None = None,
 ) -> Settings:
     return Settings(
         environment="test",
@@ -52,6 +53,7 @@ def fixture_settings(
         manifest_path=manifest,
         derivatives_index_path=derivatives_index,
         media_root=media_root,
+        derivatives_root=derivatives_root,
         media_base_url=media_base_url,
     )
 

@@ -69,7 +69,7 @@ path inside the git checkout.
 | Requirement | Version / detail |
 |---|---|
 | Python | 3.11 or later (see `pyproject.toml`'s `requires-python`) |
-| Python packages | `pydantic>=2,<3`, `requests>=2.31,<3`, `paramiko>=3.4,<4` (installed automatically by `pip install -e .`); `pytest>=8,<9` and `responses>=0.25,<1` for the dev/test extra only |
+| Python packages | `pydantic>=2,<3`, `requests>=2.31,<3`, `paramiko>=3.4,<4` (installed automatically by `pip install -e .`); `pillow>=10.3,<13` only for the separate derivatives command (`derivatives` extra); `pytest>=8,<9`, `responses>=0.25,<1` and Pillow for the dev/test extra only |
 | ExifTool | Any recent version (developed against 13.x; the custom `XMP-auscin` namespace config only needs standard `-config` support, present in all modern releases) |
 | Perl | Required by ExifTool itself (it's a Perl program) and by the `-config` file this project ships, which is Perl source. Ubuntu's `libimage-exiftool-perl` package pulls in a compatible Perl automatically — there is nothing to install separately on a standard Ubuntu/Nectar image. |
 | Filesystem permissions | The account running the importer needs read/write access to the staging directory (create/write/delete files and subdirectories) and read access to this repository checkout. No elevated/root permissions are needed for `--plan-only`/`--process-local`. `--transfer` additionally needs the SSH private key file to be readable only by that account (standard `chmod 600`). |
@@ -423,6 +423,119 @@ all, structurally — not merely "don't call" it — see `run()` in
 `cli.py`, where `ParamikoSshSftpTransport`/`ParamikoReadBackSftpTransport`
 are only ever instantiated inside the `mode is RunMode.TRANSFER` branch.
 
+## Generating thumbnails and previews (separate command)
+
+The portal's galleries and detail pages need small renditions of Level 1
+images. They must never load the originals. These renditions are made by
+a **separate, explicit command**. It is not a run mode of `cli.py`, and none of
+`--plan-only`, `--process-local` or `--transfer` runs it or changes
+because of it. It works only on local files: it makes no Spotteron or Gadi
+connection, and it refuses any path under `/g/data`.
+
+It needs Pillow, which is used only by this command. The importer itself
+never decodes an image. Install Pillow through the optional
+`derivatives` extra:
+
+```bash
+pip install -e ".[derivatives]"
+```
+
+Run it after a `--process-local` (or `--transfer`) run, against the same
+staging directory:
+
+```bash
+python -m coastsnap_import.derivatives \
+  --manifest "$HOME/auscin-staging/manifests/<root-id>.json" \
+  --input-root "$HOME/auscin-staging" \
+  --output-root "$HOME/auscin-derivatives" \
+  --index-output "$HOME/auscin-derivatives/derivatives-index.json" \
+  --max-images 1
+```
+
+`--max-images` is optional and meant for testing. The command handles every
+manifest entry that has a Level 1 product. For each one:
+
+1. It resolves only the manifest's relative Level 1 path, which must sit
+   inside `level-1/root-<root-id>/`. Absolute, drive, UNC, backslash,
+   colon and `..` paths are rejected, as is anything that resolves outside
+   `--input-root` through a link.
+2. It checks that the file exists and that its size and **SHA-256 match the
+   manifest before decoding**.
+3. It writes a **thumbnail** (longest side ≤ 400 px) and a **preview**
+   (longest side ≤ 1600 px):
+   - aspect ratio is preserved
+   - images are never upscaled
+   - EXIF orientation is applied
+   - output is an RGB baseline JPEG with **no embedded metadata**, so GPS
+     and XMP never reach a public rendition
+
+   The output paths are deterministic:
+
+   ```
+   <output-root>/derivatives/thumbnails/root-<root-id>/<yyyy>/<mm>/<dd>/<observation-id>.jpg
+   <output-root>/derivatives/previews/root-<root-id>/<yyyy>/<mm>/<dd>/<observation-id>.jpg
+   ```
+4. It reuses existing derivatives instead of rewriting them when the previous
+   index recorded them for the same Level 1 checksum and product and the
+   same size and quality spec, and the files on disk still match their
+   recorded checksums. A corrupted derivative, a changed Level 1 or a
+   changed spec causes regeneration.
+
+It prints `[processed]`, `[reused]`, `[skip]` or `[error]` per
+observation, then a summary line:
+
+```
+Derivatives complete: processed=<n> reused=<n> skipped=<n> failed=<n> index=derivatives-index.json
+```
+
+- `skipped`: the manifest entry has no Level 1 product or capture time.
+- `failed`: the source is missing, has the wrong size or checksum, can't be
+  decoded, or is an unsupported format. Accepted sources are JPEG, PNG and
+  WebP. HEIC and anything else fail explicitly.
+
+Exit codes:
+
+- `1` when any attempted image fails
+- `2` for configuration errors: an invalid manifest, a missing input root, a
+  `/g/data` path, or a non-positive `--max-images`
+- `0` otherwise
+
+### The derivatives index (consumed by `apps/api`)
+
+`schema_version: 2`. It is written atomically, and its model is
+`coastsnap_import.derivatives.DerivativesIndex`, which the API imports
+directly.
+
+Top-level fields:
+
+- `root_id`
+- `generated_at_utc`
+- `generator`
+- `specs`: the size and quality per rendition
+
+Each entry has:
+
+- `observation_id`
+- `level1_product_id`
+- `source_sha256`: the Level 1 checksum the renditions were made from
+- `source_width` / `source_height`: displayed dimensions, after EXIF orientation
+- `thumbnail` / `preview`, each with:
+  - `relative_path` (relative to `--output-root`)
+  - `content_type` (`image/jpeg`)
+  - `width` / `height`
+  - `file_size_bytes`
+  - `sha256`
+
+It contains only relative paths and catalogue identifiers. It never holds
+absolute or `/g/data` paths, credentials, source URLs or raw Spotteron
+records.
+
+The index lists the observations handled in **this run**. With
+`--max-images`, entries beyond the limit are omitted, so run without the
+limit to produce a complete index. The API ignores entries whose
+`source_sha256` or `level1_product_id` no longer matches the manifest, so
+stale renditions are never served as if they matched the original.
+
 ## Tests and linting
 
 ```bash
@@ -433,3 +546,9 @@ pytest -q
 No test in this suite makes a real Spotteron or Gadi network call —
 HTTP is mocked with `responses`, and SFTP/SSH is faked in-memory. There
 is no separate lint tool configured for this package yet.
+
+The `dev` extra includes Pillow for `tests/test_derivatives.py`. Those
+tests generate every source image at runtime, so no photos are committed.
+The symlink-escape case is skipped on accounts that can't create
+symlinks, which includes Windows without Developer Mode. The Windows
+junction-escape case needs no privilege and always runs there.

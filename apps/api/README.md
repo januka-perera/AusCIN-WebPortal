@@ -11,7 +11,12 @@ media from an in-memory catalogue built at startup from these inputs:
    (`manifests/<root_id>.json`). It is parsed with the worker's own
    `coastsnap_import.models.Manifest`.
 3. **An optional derivatives index** (JSON) listing thumbnails and previews.
-4. **An optional local media root** that every relative path resolves beneath.
+   It is written by the worker's `python -m coastsnap_import.derivatives`
+   command and parsed with the worker's own
+   `coastsnap_import.derivatives.DerivativesIndex`.
+4. **An optional local media root** that the Level 1 paths resolve beneath,
+   and an optional **separate derivatives root** for the worker's
+   `--output-root`.
 
 Not implemented yet:
 
@@ -27,9 +32,12 @@ Not implemented yet:
 cd apps\api
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
-# The worker package provides the manifest schema. Install it from the
-# checkout first — it is intentionally not a declared dependency.
-.\.venv\Scripts\python.exe -m pip install -e ..\worker -e ".[dev]"
+# The worker package provides the manifest and derivatives-index schemas.
+# Install it from the checkout first — it is intentionally not a declared
+# dependency. The [derivatives] extra brings in Pillow. The API never imports
+# Pillow; it's needed only for the worker-to-API integration test (skipped
+# without it).
+.\.venv\Scripts\python.exe -m pip install -e "..\worker[derivatives]" -e ".[dev]"
 ```
 
 On Linux/Nectar the same steps apply with `python3 -m venv .venv` and
@@ -45,7 +53,8 @@ Environment variables (see `.env.example`; names only, never commit values):
 | `COASTSNAP_SITE_REGISTRY_PATH` | yes | Reviewed site registry JSON |
 | `COASTSNAP_MANIFEST_PATH` | yes | One worker manifest JSON |
 | `COASTSNAP_DERIVATIVES_INDEX_PATH` | no | Thumbnail/preview index. Without it, no derivative URLs are offered. |
-| `COASTSNAP_MEDIA_ROOT` | no | Local media root. Without it, media URLs are null and media endpoints return 503. If set, it must exist when the app starts. |
+| `COASTSNAP_MEDIA_ROOT` | no | Local media root for Level 1 paths (the worker's staging directory). Without it, media URLs are null and media endpoints return 503. If set, it must exist when the app starts. |
+| `COASTSNAP_DERIVATIVES_ROOT` | no | Directory the derivatives index's paths resolve beneath (the worker's `--output-root`). Defaults to `COASTSNAP_MEDIA_ROOT`, and requires it to be set. |
 | `AUSCIN_MEDIA_BASE_URL` | no | An http(s) origin used as a prefix for media URLs, e.g. `http://localhost:8000`. Without it, media URLs are root-relative. |
 
 ## Running locally against the synthetic fixtures
@@ -95,8 +104,8 @@ Invalid values return 422.
 | Path | Serves | Notes |
 |---|---|---|
 | `/media/coastsnap/{media_id}/original` | The **Level 1** file | `Content-Disposition: attachment; filename="<media_id>.<ext>"`, the correct `Content-Type`, `ETag` = catalogue SHA-256, HTTP Range requests supported |
-| `/media/coastsnap/{media_id}/preview` | Browser-sized preview JPEG | Served inline |
-| `/media/coastsnap/{media_id}/thumbnail` | Thumbnail JPEG | Served inline |
+| `/media/coastsnap/{media_id}/preview` | Browser-sized preview JPEG (≤ 1600 px) | Served inline, `ETag` = index SHA-256 |
+| `/media/coastsnap/{media_id}/thumbnail` | Thumbnail JPEG (≤ 400 px) | Served inline, `ETag` = index SHA-256 |
 
 Media responses and errors:
 
@@ -105,10 +114,10 @@ Media responses and errors:
 | 200 / 206 | — | File served, fully (200) or as a byte range (206) |
 | 403 | `download_not_permitted` | The registry doesn't permit original downloads for the site |
 | 404 | `media_not_found` | Unknown media ID, an ID minted for another site, a non-public site, or an incomplete manifest entry |
-| 404 | `preview_not_available` / `thumbnail_not_available` | No such rendition in the derivatives index. **There is never a fallback to the original.** |
+| 404 | `preview_not_available` / `thumbnail_not_available` | No such rendition in the derivatives index, or the index entry is stale (see below). **There is never a fallback to the original.** |
 | 404 | `original_not_available` | The Level 1 file type isn't one the API serves (JPEG, PNG or WebP) |
 | 416 | — | Unsatisfiable range |
-| 503 | `media_unavailable` | Covers four cases: no media root is configured; a recorded file is missing or unreadable; the file's size no longer matches the catalogue; or a path was rejected by the media store |
+| 503 | `media_unavailable` | Covers four cases: no media root is configured; a recorded file is missing or unreadable; the file's size no longer matches the manifest or index; or a path was rejected by the media store |
 
 Errors use one controlled shape, and request input and paths are never echoed:
 
@@ -127,8 +136,8 @@ Supported natively by Starlette's `FileResponse` (Starlette 1.7):
 - unsatisfiable ranges → 416
 - `If-Range` is checked against the checksum ETag
 
-Previews and thumbnails also support ranges. They use Starlette's default
-ETag, which is based on mtime and size.
+Previews and thumbnails also support ranges. Their ETag is the SHA-256
+recorded in the derivatives index.
 
 ### Download policy (provisional)
 
@@ -221,29 +230,62 @@ human-legible slugs.
 The source time zone behind `spotted_at_utc` is still the worker's documented
 assumption (default UTC).
 
-## Derivatives index (provisional format)
+## Derivatives index (worker-generated, `schema_version: 2`)
 
-The index will eventually be written by the planned worker derivatives step.
-Until then it is hand-authored for fixtures:
+The index is produced by the worker's separate derivatives command. See
+`apps/worker/README.md`, "Generating thumbnails and previews":
+
+```powershell
+cd apps\worker
+.\.venv\Scripts\python.exe -m coastsnap_import.derivatives `
+  --manifest <staging>\manifests\<root_id>.json --input-root <staging> `
+  --output-root <derivatives-root> --index-output <derivatives-root>\derivatives-index.json
+```
+
+Point `COASTSNAP_MEDIA_ROOT` at `<staging>`, `COASTSNAP_DERIVATIVES_ROOT` at
+`<derivatives-root>`, and `COASTSNAP_DERIVATIVES_INDEX_PATH` at the index.
+The API parses it with the worker's own `DerivativesIndex` model, so there
+is one format. The shape is:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "root_id": "<root_id>",
+  "generated_at_utc": "…", "generator": "coastsnap-import/0.1.0",
+  "specs": { "thumbnail": {"max_dimension": 400, "jpeg_quality": 80},
+             "preview":   {"max_dimension": 1600, "jpeg_quality": 85} },
   "derivatives": [
     {
       "observation_id": "<observation_id>",
-      "width": 4032, "height": 3024,
-      "thumbnail_relative_path": "derivatives/thumbnails/root-<root_id>/2026/08/01/<observation_id>.jpg",
-      "preview_relative_path": "derivatives/previews/root-<root_id>/2026/08/01/<observation_id>.jpg"
+      "level1_product_id": "<observation_id>-L1",
+      "source_sha256": "<Level 1 checksum the renditions were made from>",
+      "source_width": 4032, "source_height": 3024,
+      "thumbnail": { "relative_path": "derivatives/thumbnails/root-<root_id>/2026/08/01/<observation_id>.jpg",
+                     "content_type": "image/jpeg", "width": 400, "height": 300,
+                     "file_size_bytes": 41234, "sha256": "…" },
+      "preview":   { "relative_path": "derivatives/previews/root-<root_id>/2026/08/01/<observation_id>.jpg",
+                     "…": "…" }
     }
   ]
 }
 ```
 
-All fields other than `observation_id` are optional. Width and height are
-the original's pixel dimensions. They are held internally and not yet
-returned in JSON.
+On top of the model's own validation, the API applies these checks:
+
+- **Rejects the whole index** when it has any of:
+  - unsafe or misplaced paths
+  - non-JPEG renditions
+  - a different `root_id`
+  - unknown or duplicate observations
+  - the old version-1 format
+- **Drops stale entries:** an entry whose `source_sha256` or
+  `level1_product_id` no longer matches the manifest is ignored, with a
+  logged warning. Its URLs are then null and its routes return 404, so
+  renditions of an older Level 1 are never served.
+
+`source_width`/`source_height` are held internally as the observation's
+dimensions, but are not yet returned in JSON. `thumbnail`/`preview` may be
+`null`; the committed fixture uses this to exercise a missing preview.
 
 ## Contract differences from the frontend types
 

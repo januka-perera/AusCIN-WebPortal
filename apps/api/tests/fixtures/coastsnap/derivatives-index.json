@@ -1,29 +1,103 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "root_id": "TEST_ROOT_ID",
+  "generated_at_utc": "2026-09-02T01:00:00Z",
+  "generator": "coastsnap-import/0.1.0",
+  "specs": {
+    "thumbnail": {
+      "max_dimension": 400,
+      "jpeg_quality": 80
+    },
+    "preview": {
+      "max_dimension": 1600,
+      "jpeg_quality": 85
+    }
+  },
   "derivatives": [
     {
       "observation_id": "TEST_OBS_0001",
-      "width": 4032,
-      "height": 3024,
-      "thumbnail_relative_path": "derivatives/thumbnails/root-TEST_ROOT_ID/2026/08/01/TEST_OBS_0001.jpg",
-      "preview_relative_path": "derivatives/previews/root-TEST_ROOT_ID/2026/08/01/TEST_OBS_0001.jpg"
+      "level1_product_id": "TEST_OBS_0001-L1",
+      "source_sha256": "5a0efd023e3d18297020cbcd68b02a3c6df3563a341cb86474006b1670c8fa95",
+      "source_width": 8,
+      "source_height": 6,
+      "thumbnail": {
+        "relative_path": "derivatives/thumbnails/root-TEST_ROOT_ID/2026/08/01/TEST_OBS_0001.jpg",
+        "content_type": "image/jpeg",
+        "width": 8,
+        "height": 6,
+        "file_size_bytes": 688,
+        "sha256": "6cd6ba887b5c12c49fec4360fb16dbdf4e864d16cb604645084718821785b3e5"
+      },
+      "preview": {
+        "relative_path": "derivatives/previews/root-TEST_ROOT_ID/2026/08/01/TEST_OBS_0001.jpg",
+        "content_type": "image/jpeg",
+        "width": 8,
+        "height": 6,
+        "file_size_bytes": 686,
+        "sha256": "611069dbe54856d1cd305dda1dabf6ef6c3c2440d9473c147c752c862ec7008f"
+      }
     },
     {
       "observation_id": "TEST_OBS_0002",
-      "width": 4032,
-      "height": 3024,
-      "thumbnail_relative_path": "derivatives/thumbnails/root-TEST_ROOT_ID/2026/08/02/TEST_OBS_0002.jpg",
-      "preview_relative_path": "derivatives/previews/root-TEST_ROOT_ID/2026/08/02/TEST_OBS_0002.jpg"
+      "level1_product_id": "TEST_OBS_0002-L1",
+      "source_sha256": "7c28a1da5a13dbd388c6f7e5735877f6500d72a0939536300ec2853ddbddb018",
+      "source_width": 8,
+      "source_height": 6,
+      "thumbnail": {
+        "relative_path": "derivatives/thumbnails/root-TEST_ROOT_ID/2026/08/02/TEST_OBS_0002.jpg",
+        "content_type": "image/jpeg",
+        "width": 8,
+        "height": 6,
+        "file_size_bytes": 688,
+        "sha256": "a8ee2bd3e57e7e1813b553445f3c11f514fc53516f7bd457ac4539f4d27bbd8d"
+      },
+      "preview": {
+        "relative_path": "derivatives/previews/root-TEST_ROOT_ID/2026/08/02/TEST_OBS_0002.jpg",
+        "content_type": "image/jpeg",
+        "width": 8,
+        "height": 6,
+        "file_size_bytes": 686,
+        "sha256": "c8e9b9505ca8dc1a1b03bf492d7285724d6be516adfff290355f34cc935074ad"
+      }
     },
     {
       "observation_id": "TEST_OBS_0003",
-      "thumbnail_relative_path": "derivatives/thumbnails/root-TEST_ROOT_ID/2026/08/10/TEST_OBS_0003.jpg",
-      "preview_relative_path": "derivatives/previews/root-TEST_ROOT_ID/2026/08/10/TEST_OBS_0003.jpg"
+      "level1_product_id": "TEST_OBS_0003-L1",
+      "source_sha256": "d7089e60d0ca47d2735b8af7862fe146401377b064b0e07a687d004fcd469c12",
+      "source_width": 8,
+      "source_height": 6,
+      "thumbnail": {
+        "relative_path": "derivatives/thumbnails/root-TEST_ROOT_ID/2026/08/10/TEST_OBS_0003.jpg",
+        "content_type": "image/jpeg",
+        "width": 8,
+        "height": 6,
+        "file_size_bytes": 688,
+        "sha256": "7d7d9209f4b7cbc2ac8badd5f95552623593848fd65902ceb7c527e785420e48"
+      },
+      "preview": {
+        "relative_path": "derivatives/previews/root-TEST_ROOT_ID/2026/08/10/TEST_OBS_0003.jpg",
+        "content_type": "image/jpeg",
+        "width": 8,
+        "height": 6,
+        "file_size_bytes": 686,
+        "sha256": "c8428895f2e05ec17b4fe27cebe7c2e335a95b329767e22e14d3604035403f24"
+      }
     },
     {
       "observation_id": "TEST_OBS_0004",
-      "thumbnail_relative_path": "derivatives/thumbnails/root-TEST_ROOT_ID/2026/08/20/TEST_OBS_0004.jpg"
+      "level1_product_id": "TEST_OBS_0004-L1",
+      "source_sha256": "bd75d6020fe1358042a86acbfc6bd52db67bd185ab5b1c830b0d37c975f27a26",
+      "source_width": 8,
+      "source_height": 6,
+      "thumbnail": {
+        "relative_path": "derivatives/thumbnails/root-TEST_ROOT_ID/2026/08/20/TEST_OBS_0004.jpg",
+        "content_type": "image/jpeg",
+        "width": 8,
+        "height": 6,
+        "file_size_bytes": 688,
+        "sha256": "ca8f9347eed429ab59059a5f783f858dbf58efa6320e73e497c05a3d4e53d87c"
+      },
+      "preview": null
     }
   ]
 }

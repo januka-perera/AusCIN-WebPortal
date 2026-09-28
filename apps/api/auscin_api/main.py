@@ -24,11 +24,18 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     settings = settings or Settings.from_env()
 
     media_store: Optional[MediaStore] = None
+    derivatives_store: Optional[MediaStore] = None
     if settings.media_root is not None:
         try:
             media_store = LocalMediaStore(settings.media_root)
         except ValueError as exc:
             raise SettingsError(f"COASTSNAP_MEDIA_ROOT is invalid: {exc}") from exc
+        derivatives_store = media_store
+    if settings.derivatives_root is not None:
+        try:
+            derivatives_store = LocalMediaStore(settings.derivatives_root)
+        except ValueError as exc:
+            raise SettingsError(f"COASTSNAP_DERIVATIVES_ROOT is invalid: {exc}") from exc
 
     catalogue = load_catalogue(
         settings.site_registry_path,
@@ -42,6 +49,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.state.settings = settings
     app.state.catalogue = catalogue
     app.state.media_store = media_store
+    app.state.derivatives_store = derivatives_store
     register_error_handlers(app)
 
     @app.get("/api/v1/health", response_model=HealthResponse, tags=["health"])

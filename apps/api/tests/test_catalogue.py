@@ -168,7 +168,7 @@ from conftest import DERIVATIVES_INDEX_PATH  # noqa: E402
 )
 def test_derivatives_index_with_unsafe_or_misplaced_path_is_rejected(derivatives_data, write_json, bad_value):
     data = copy.deepcopy(derivatives_data)
-    data["derivatives"][0]["thumbnail_relative_path"] = bad_value
+    data["derivatives"][0]["thumbnail"]["relative_path"] = bad_value
     with pytest.raises(CatalogueError):
         load_catalogue(REGISTRY_PATH, MANIFEST_PATH, write_json("derivatives.json", data))
 
@@ -210,10 +210,38 @@ def test_catalogue_retains_trusted_internal_media_metadata():
     assert media.level1_content_type == "image/jpeg"
     assert media.level1_file_size > 0
     assert len(media.level1_sha256) == 64
-    assert (media.width, media.height) == (4032, 3024)
-    assert media.thumbnail_relative_path == "derivatives/thumbnails/root-TEST_ROOT_ID/2026/08/01/TEST_OBS_0001.jpg"
-    assert media.preview_relative_path == "derivatives/previews/root-TEST_ROOT_ID/2026/08/01/TEST_OBS_0001.jpg"
+    assert (media.width, media.height) == (8, 6)
+    assert media.thumbnail.relative_path == "derivatives/thumbnails/root-TEST_ROOT_ID/2026/08/01/TEST_OBS_0001.jpg"
+    assert media.preview.relative_path == "derivatives/previews/root-TEST_ROOT_ID/2026/08/01/TEST_OBS_0001.jpg"
+    assert len(media.thumbnail.sha256) == 64 and media.thumbnail.file_size_bytes > 0
     assert media.original_download_permitted is True
 
     fifth = catalogue.get_media(build_media_id(PUBLIC_SITE_ID, "TEST_OBS_0005"))
-    assert fifth.media.thumbnail_relative_path is None and fifth.media.width is None
+    assert fifth.media.thumbnail is None and fifth.media.width is None
+
+
+def test_derivatives_index_v1_format_is_rejected(write_json):
+    legacy = {"schema_version": 1, "root_id": "TEST_ROOT_ID", "derivatives": []}
+    with pytest.raises(CatalogueError, match="Invalid derivatives index"):
+        load_catalogue(REGISTRY_PATH, MANIFEST_PATH, write_json("derivatives.json", legacy))
+
+
+def test_duplicate_derivatives_entry_is_rejected(derivatives_data, write_json):
+    data = copy.deepcopy(derivatives_data)
+    data["derivatives"].append(copy.deepcopy(data["derivatives"][0]))
+    with pytest.raises(CatalogueError, match="duplicate"):
+        load_catalogue(REGISTRY_PATH, MANIFEST_PATH, write_json("derivatives.json", data))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("source_sha256", "0" * 64), ("level1_product_id", "TEST_OBS_0002-L1")],
+)
+def test_stale_derivatives_are_dropped_not_served(derivatives_data, write_json, field, value):
+    data = copy.deepcopy(derivatives_data)
+    data["derivatives"][0][field] = value  # TEST_OBS_0001's renditions no longer match its Level 1
+    catalogue = load_catalogue(REGISTRY_PATH, MANIFEST_PATH, write_json("derivatives.json", data), media_enabled=True)
+    stale = catalogue.get_media(build_media_id(PUBLIC_SITE_ID, "TEST_OBS_0001"))
+    assert stale.media.thumbnail is None and stale.media.preview is None and stale.media.width is None
+    fresh = catalogue.get_media(build_media_id(PUBLIC_SITE_ID, "TEST_OBS_0002"))
+    assert fresh.media.thumbnail is not None

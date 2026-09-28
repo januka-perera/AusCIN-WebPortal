@@ -1,8 +1,9 @@
 """In-memory CoastSnap catalogue built from a reviewed site registry, one
 worker manifest and an optional derivatives index.
 
-The manifest is parsed with the worker's own `coastsnap_import.models.Manifest`
-so there is exactly one manifest format. Loading is all-or-nothing: an unsafe
+The manifest and the derivatives index are parsed with the worker's own models
+(`coastsnap_import.models.Manifest` and
+`coastsnap_import.derivatives.DerivativesIndex`), so each has exactly one format. Loading is all-or-nothing: an unsafe
 path, an inconsistent root ID or an invalid registry or index rejects the whole
 input rather than serving a partially trusted catalogue.
 
@@ -18,6 +19,7 @@ paths, content type, size and checksum. Only the media routes and the
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -25,6 +27,7 @@ from pathlib import Path
 from typing import Literal, Optional
 from zoneinfo import ZoneInfo
 
+from coastsnap_import.derivatives import DerivativeFile, DerivativeIndexEntry, DerivativesIndex
 from coastsnap_import.models import (
     LEVEL0_DIR,
     LEVEL1_DIR,
@@ -41,12 +44,12 @@ from .schemas import (
     CoastSnapContributorResponse,
     CoastSnapObservationResponse,
     CoastSnapSiteResponse,
-    DerivativeEntry,
-    DerivativesIndex,
     MediaType,
     RegistrySite,
     SiteRegistry,
 )
+
+logger = logging.getLogger(__name__)
 
 CONTRIBUTOR_PLACEHOLDER_NAME = "CoastSnap contributor"
 """Contributor names are never read from the manifest in this milestone —
@@ -114,14 +117,15 @@ def _validate_entry_paths(entry: ManifestEntry, root_id: str) -> None:
         validate_relative_path(value or "", field=f"observation {obs_id!r} {field}", required_prefix=prefix)
 
 
-def _validate_derivative_paths(item: DerivativeEntry, root_id: str) -> None:
+def _validate_derivative_paths(item: DerivativeIndexEntry, root_id: str) -> None:
     site_dir = build_site_directory_id(root_id)
-    for field, value, base in (
-        ("thumbnail_relative_path", item.thumbnail_relative_path, THUMBNAILS_DIR),
-        ("preview_relative_path", item.preview_relative_path, PREVIEWS_DIR),
+    for field, rendition, base in (
+        ("thumbnail", item.thumbnail, THUMBNAILS_DIR),
+        ("preview", item.preview, PREVIEWS_DIR),
     ):
-        if value is None:
+        if rendition is None:
             continue
+        value = rendition.relative_path
         validate_relative_path(value, field=f"derivative {item.observation_id!r} {field}",
                                required_prefix=f"{base}/{site_dir}/")
         if not value.lower().endswith((".jpg", ".jpeg")):
@@ -151,9 +155,11 @@ class MediaRecord:
     level1_file_size: int
     level1_sha256: str
     width: Optional[int]
+    """Level 1 pixel dimensions as displayed (EXIF orientation applied), from the derivatives index."""
     height: Optional[int]
-    thumbnail_relative_path: Optional[str]
-    preview_relative_path: Optional[str]
+    thumbnail: Optional[DerivativeFile]
+    """Trusted derivative record: relative path (under the derivatives root), size, checksum, dimensions."""
+    preview: Optional[DerivativeFile]
     original_download_permitted: bool
     """Catalogue policy only (site is public and the registry permits downloads). Says nothing about whether the file exists."""
 
@@ -282,12 +288,10 @@ class Catalogue:
             processing_status="processed",
             publication_status=site.publication_status,
             thumbnail_url=(
-                self.media_url(observation.media_id, "thumbnail")
-                if self._media_enabled and media.thumbnail_relative_path else None
+                self.media_url(observation.media_id, "thumbnail") if self._media_enabled and media.thumbnail else None
             ),
             preview_url=(
-                self.media_url(observation.media_id, "preview")
-                if self._media_enabled and media.preview_relative_path else None
+                self.media_url(observation.media_id, "preview") if self._media_enabled and media.preview else None
             ),
             is_original_available=original_available,
             original_url=self.media_url(observation.media_id, "original") if original_available else None,
@@ -400,14 +404,23 @@ def build_catalogue(
         if entry.level1 is not None and not _SHA256_RE.match(entry.level1.checksum.sha256):
             raise CatalogueError(f"observation {obs.observation_id!r} level1 checksum is not a SHA-256 hex digest")
 
-    derivative_by_obs: dict[str, DerivativeEntry] = {}
+    level1_by_obs = {e.observation.observation_id: e.level1 for e in manifest.entries}
+    derivative_by_obs: dict[str, DerivativeIndexEntry] = {}
     if derivatives is not None:
         if derivatives.root_id != root_id:
             raise CatalogueError("derivatives index root_id does not match the manifest root_id")
         for item in derivatives.derivatives:
             if item.observation_id not in seen:
                 raise CatalogueError(f"derivatives index references unknown observation {item.observation_id!r}")
+            if item.observation_id in derivative_by_obs:
+                raise CatalogueError(f"duplicate observation {item.observation_id!r} in derivatives index")
             _validate_derivative_paths(item, root_id)
+            level1 = level1_by_obs[item.observation_id]
+            if level1 is None or item.source_sha256 != level1.checksum.sha256 or item.level1_product_id != level1.product_id:
+                # Made from a different Level 1 than the manifest now records. Stale renditions are
+                # dropped (so none is offered) rather than served as if they matched the original.
+                logger.warning("Ignoring stale derivatives for observation %r", item.observation_id)
+                continue
             derivative_by_obs[item.observation_id] = item
 
     site = next((s for s in registry.sites if s.spotteron_root_id == root_id), None)
@@ -435,10 +448,10 @@ def build_catalogue(
                         level1_content_type=_level1_content_type(entry.level1.local_relative_path),
                         level1_file_size=entry.level1.file_size_bytes,
                         level1_sha256=entry.level1.checksum.sha256,
-                        width=derivative.width if derivative else None,
-                        height=derivative.height if derivative else None,
-                        thumbnail_relative_path=derivative.thumbnail_relative_path if derivative else None,
-                        preview_relative_path=derivative.preview_relative_path if derivative else None,
+                        width=derivative.source_width if derivative else None,
+                        height=derivative.source_height if derivative else None,
+                        thumbnail=derivative.thumbnail if derivative else None,
+                        preview=derivative.preview if derivative else None,
                         original_download_permitted=site.original_download_permitted,
                     ),
                 )

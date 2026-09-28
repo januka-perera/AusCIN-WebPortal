@@ -87,3 +87,13 @@ def test_missing_media_root_fails_at_startup(tmp_path):
 
     with pytest.raises(SettingsError, match="COASTSNAP_MEDIA_ROOT"):
         create_app(fixture_settings(media_root=tmp_path / "missing"))
+
+
+def test_derivatives_root_is_read_and_requires_media_root():
+    base = {"COASTSNAP_SITE_REGISTRY_PATH": "r.json", "COASTSNAP_MANIFEST_PATH": "m.json"}
+    settings = Settings.from_env({**base, "COASTSNAP_MEDIA_ROOT": "staging", "COASTSNAP_DERIVATIVES_ROOT": "derivatives"})
+    assert settings.derivatives_root == Path("derivatives")
+    with pytest.raises(SettingsError, match="COASTSNAP_DERIVATIVES_ROOT requires COASTSNAP_MEDIA_ROOT"):
+        Settings.from_env({**base, "COASTSNAP_DERIVATIVES_ROOT": "derivatives"})
+    with pytest.raises(SettingsError, match="/g/data"):
+        Settings.from_env({**base, "COASTSNAP_MEDIA_ROOT": "staging", "COASTSNAP_DERIVATIVES_ROOT": "/g/data/qu34/d"})

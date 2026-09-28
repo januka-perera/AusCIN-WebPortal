@@ -57,8 +57,11 @@ def _write(root: Path, relative_path: str, data: bytes) -> None:
     target.write_bytes(data)
 
 
-def build_media_root(root: Path, manifest_path: Path, derivatives_index_path: Path) -> Path:
-    """Writes every Level 1 file and derivative referenced by the fixtures under ``root``."""
+def build_media_root(
+    root: Path, manifest_path: Path, derivatives_index_path: Path, derivatives_root: Path | None = None
+) -> Path:
+    """Writes every Level 1 file referenced by the fixture manifest under ``root``, and every
+    derivative in the (schema_version 2) fixture index under ``derivatives_root`` (default: ``root``)."""
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     for entry in manifest["entries"]:
         level1 = entry.get("level1")
@@ -67,9 +70,9 @@ def build_media_root(root: Path, manifest_path: Path, derivatives_index_path: Pa
     index = json.loads(derivatives_index_path.read_text(encoding="utf-8"))
     for item in index["derivatives"]:
         for kind in ("thumbnail", "preview"):
-            relative = item.get(f"{kind}_relative_path")
-            if relative:
-                _write(root, relative, derivative_bytes(item["observation_id"], kind))
+            rendition = item.get(kind)
+            if rendition:
+                _write(derivatives_root or root, rendition["relative_path"], derivative_bytes(item["observation_id"], kind))
     return root
 
 
