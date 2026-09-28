@@ -536,6 +536,15 @@ limit to produce a complete index. The API ignores entries whose
 `source_sha256` or `level1_product_id` no longer matches the manifest, so
 stale renditions are never served as if they matched the original.
 
+### Local end-to-end check
+
+`scripts/coastsnap_e2e_smoke.py` (repository root) runs this command for real
+against a synthetic staging directory outside the repository. It runs the
+command twice, checking that the second run reuses everything. It then
+serves the output through FastAPI and Next.js and verifies the downloaded
+original against the manifest checksum. See "Local end-to-end workflow" in
+`apps/api/README.md`.
+
 ## Tests and linting
 
 ```bash

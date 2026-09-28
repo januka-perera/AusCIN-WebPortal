@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { COASTSNAP_OBSERVATIONS } from "@/data";
 import {
+  COASTSNAP_ERROR_TITLE,
   SAMPLE_RECORD_NOTICE,
   SYNTHETIC_API_RECORD_NOTICE,
   describeUnavailableDownload,
@@ -8,6 +9,7 @@ import {
   getRecordNotice,
 } from "./coastsnap-presentation";
 import { isRemoteMediaUrl } from "./media-url";
+import { getFooterDataNotice } from "./site-footer";
 
 describe("getRecordNotice", () => {
   it("always labels sample data as a development record", () => {
@@ -69,5 +71,29 @@ describe("isRemoteMediaUrl", () => {
     expect(isRemoteMediaUrl("http://localhost:8000/media/coastsnap/csm_x/thumbnail")).toBe(true);
     expect(isRemoteMediaUrl("https://media.example.test/media/coastsnap/csm_x/preview")).toBe(true);
     expect(isRemoteMediaUrl("/sample-media/thumbnails/beach-wide.svg")).toBe(false);
+  });
+});
+
+describe("COASTSNAP_ERROR_TITLE", () => {
+  it("is the stable error title and carries no host, path or error detail", () => {
+    expect(COASTSNAP_ERROR_TITLE).toBe("CoastSnap catalogue unavailable | AusCIN");
+    for (const forbidden of ["localhost", "http:", "https:", "/", "\\", "Error", "ECONN"]) {
+      expect(COASTSNAP_ERROR_TITLE).not.toContain(forbidden);
+    }
+  });
+});
+
+describe("getFooterDataNotice", () => {
+  it("identifies everything as synthetic development data in sample mode", () => {
+    const notice = getFooterDataNotice("sample");
+    expect(notice).toMatch(/synthetic sample data/);
+    expect(notice).toMatch(/CoastSnap/);
+  });
+
+  it("describes catalogue-backed CoastSnap observations in API mode without claiming production data", () => {
+    const notice = getFooterDataNotice("api");
+    expect(notice).toMatch(/CoastSnap observations are served by the AusCIN catalogue API/);
+    expect(notice).toMatch(/station, camera and media records are synthetic sample data/);
+    expect(notice).not.toMatch(/production|operational|live/i);
   });
 });

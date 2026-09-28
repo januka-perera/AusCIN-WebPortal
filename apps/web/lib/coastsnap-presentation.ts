@@ -7,6 +7,9 @@ import type { CoastSnapDataSource, CoastSnapObservation } from "@/data";
  * says so (`isSynthetic`), and they get real download wording.
  */
 
+/** Fixed document title for the /coastsnap error boundary. It never includes an API host, path or error detail. */
+export const COASTSNAP_ERROR_TITLE = "CoastSnap catalogue unavailable | AusCIN";
+
 export const SAMPLE_RECORD_NOTICE = "Sample development record — not an operational AusCIN feed.";
 export const SYNTHETIC_API_RECORD_NOTICE =
   "Synthetic test record served by the development catalogue — not an operational AusCIN feed.";

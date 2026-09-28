@@ -154,7 +154,7 @@ def test_observation_shape_matches_frontend_contract(client):
     item = client.get(f"{BASE}/sites/{PUBLIC_SITE_ID}/observations/{media_id('TEST_OBS_0003')}").json()
     assert set(item) == {
         "id", "siteId", "sourcePlatform", "mediaId", "mediaType", "capturedAtUtc", "capturedAtSourceRaw",
-        "ingestedAtUtc", "displayTimeZone", "contributor", "processingStatus", "publicationStatus",
+        "width", "height", "ingestedAtUtc", "displayTimeZone", "contributor", "processingStatus", "publicationStatus",
         "thumbnailUrl", "previewUrl", "isOriginalAvailable", "originalUrl", "caption", "altText", "isSynthetic",
     }
     assert item["id"] == item["mediaId"] == media_id("TEST_OBS_0003")
@@ -325,3 +325,28 @@ def test_responses_contain_no_paths_or_source_identifiers(client, media_root, pa
     for forbidden in forbidden_values:
         # The last path deliberately requests a raw source ID; it must not be echoed.
         assert forbidden not in response.text, f"{forbidden!r} leaked from {path}"
+
+
+# --- Dimensions -------------------------------------------------------------------------
+
+
+def test_dimensions_come_from_the_derivatives_index(client):
+    # The fixture index records the synthetic Level 1 files' real 8x6 dimensions.
+    item = client.get(f"{BASE}/sites/{PUBLIC_SITE_ID}/observations/{media_id('TEST_OBS_0001')}").json()
+    assert (item["width"], item["height"]) == (8, 6)
+
+
+def test_dimensions_are_null_without_a_derivatives_entry(client, client_without_media):
+    # TEST_OBS_0005 has no derivatives entry; without an index nothing has dimensions.
+    item = client.get(f"{BASE}/sites/{PUBLIC_SITE_ID}/observations/{media_id('TEST_OBS_0005')}").json()
+    assert item["width"] is None and item["height"] is None
+    bare = client_without_media.get(f"{BASE}/sites/{PUBLIC_SITE_ID}/observations/{media_id('TEST_OBS_0001')}").json()
+    assert bare["width"] is None and bare["height"] is None
+
+
+def test_dimensions_of_a_stale_derivatives_entry_are_not_returned(derivatives_data, write_json, media_root):
+    data = copy.deepcopy(derivatives_data)
+    data["derivatives"][0]["source_sha256"] = "0" * 64  # TEST_OBS_0001's entry no longer matches its Level 1
+    stale = TestClient(create_app(fixture_settings(derivatives_index=write_json("d.json", data), media_root=media_root)))
+    item = stale.get(f"{BASE}/sites/{PUBLIC_SITE_ID}/observations/{media_id('TEST_OBS_0001')}").json()
+    assert item["width"] is None and item["height"] is None

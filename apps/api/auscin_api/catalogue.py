@@ -280,6 +280,9 @@ class Catalogue:
             media_type=observation.media_type,
             captured_at_utc=observation.captured_at_utc,
             captured_at_source_raw=observation.captured_at_source_raw,
+            # Trusted dimensions from the worker's derivatives index, and only as a pair.
+            width=media.width if media.width and media.height else None,
+            height=media.height if media.width and media.height else None,
             ingested_at_utc=observation.ingested_at_utc,
             display_time_zone=site.display_time_zone,
             contributor=CoastSnapContributorResponse(

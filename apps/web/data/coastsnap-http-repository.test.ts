@@ -230,6 +230,30 @@ describe("HttpCoastSnapRepository observations", () => {
     expect([observation?.width, observation?.height]).toEqual([4032, 3024]);
   });
 
+  it("omits dimensions when the API sends null, as it does without a derivatives entry", async () => {
+    const { repository } = repo((url) =>
+      url.pathname.endsWith(MEDIA_ID) ? { status: 200, body: apiObservation({ width: null, height: null }) } : undefined,
+    );
+    const observation = await repository.getObservationForSite(SITE_ID, MEDIA_ID);
+    expect(observation).not.toHaveProperty("width");
+    expect(observation).not.toHaveProperty("height");
+  });
+
+  it("omits dimensions unless both are present", async () => {
+    const { repository } = repo((url) =>
+      url.pathname.endsWith(MEDIA_ID) ? { status: 200, body: apiObservation({ width: 4032, height: null }) } : undefined,
+    );
+    const observation = await repository.getObservationForSite(SITE_ID, MEDIA_ID);
+    expect(observation).not.toHaveProperty("width");
+  });
+
+  it.each([0, -1, 1.5, "4032"])("rejects an invalid dimension (%s)", async (width) => {
+    const { repository } = repo((url) =>
+      url.pathname.endsWith(MEDIA_ID) ? { status: 200, body: apiObservation({ width, height: 3024 }) } : undefined,
+    );
+    await expect(repository.getObservationForSite(SITE_ID, MEDIA_ID)).rejects.toMatchObject({ kind: "invalid-response" });
+  });
+
   it("maps an API 404 to an absent media record", async () => {
     const { repository } = repo(standardRoutes);
     await expect(repository.getObservationForSite(SITE_ID, "csm_000000000000000000000000")).resolves.toBeUndefined();

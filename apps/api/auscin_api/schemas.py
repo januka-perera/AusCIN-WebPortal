@@ -14,9 +14,12 @@ frontend types — see apps/api/README.md):
   permitted, otherwise null. `representativeImageUrl` is always null.
 - `capturedAtSourceRaw` and `ingestedAtUtc` are additive fields preserving
   the worker's source timestamp and ingestion time.
+- `width` and `height` are the Level 1 pixel dimensions as displayed (EXIF
+  orientation applied), taken from the worker-generated derivatives index.
+  Both are null when no current derivatives entry exists; they are never
+  guessed.
 - `spotteronSiteId`, `spotteronObservationId`, `spotteronMediaId`,
-  `sourceUrl`, `checksumSha256`, `width` and `height` are omitted
-  (width/height are held internally only in this milestone).
+  `sourceUrl` and `checksumSha256` are omitted.
 """
 
 from __future__ import annotations
@@ -131,6 +134,8 @@ class CoastSnapObservationResponse(ApiModel):
     media_type: MediaType
     captured_at_utc: datetime
     captured_at_source_raw: Optional[str]
+    width: Optional[int] = None
+    height: Optional[int] = None
     ingested_at_utc: datetime
     display_time_zone: str
     contributor: CoastSnapContributorResponse

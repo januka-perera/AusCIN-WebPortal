@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Source_Serif_4 } from "next/font/google";
 import { SiteHeader } from "@/components/site-header";
+import { getCoastSnapDataSource } from "@/data";
 import { SITE_NAME, SITE_TAGLINE } from "@/lib/site-config";
+import { getFooterDataNotice } from "@/lib/site-footer";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -40,7 +42,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             <p>
               {SITE_NAME} — {SITE_TAGLINE}
             </p>
-            <p>Development build — station, camera and media records are synthetic sample data.</p>
+            <p>{getFooterDataNotice(getCoastSnapDataSource())}</p>
           </div>
         </footer>
       </body>

@@ -283,9 +283,11 @@ On top of the model's own validation, the API applies these checks:
   logged warning. Its URLs are then null and its routes return 404, so
   renditions of an older Level 1 are never served.
 
-`source_width`/`source_height` are held internally as the observation's
-dimensions, but are not yet returned in JSON. `thumbnail`/`preview` may be
-`null`; the committed fixture uses this to exercise a missing preview.
+`source_width`/`source_height` are returned as the observation's `width` and
+`height`: the Level 1 pixel dimensions as displayed, with EXIF orientation
+applied. Both are `null` when the observation has no current (non-stale)
+index entry; they are never guessed. `thumbnail`/`preview` may be `null`;
+the committed fixture uses this to exercise a missing preview.
 
 ## Contract differences from the frontend types
 
@@ -293,14 +295,155 @@ Compared with `apps/web/data/types/coastsnap.ts`:
 
 - **Media URLs:** `thumbnailUrl`, `previewUrl` and `originalUrl` are API media
   URLs when available, otherwise `null`. `representativeImageUrl` is always
-  `null`, but the frontend declares it as `string`, so it needs to become
-  `string | null` when the frontend is connected.
+  `null`; the frontend type allows that, and falls back to a recent
+  observation's rendition.
+- **Dimensions:** `width`/`height` are integers from the derivatives index,
+  or `null`. The frontend treats `null` as "not recorded".
 - **Contributor:** `contributor.displayName` is always the placeholder
   `"CoastSnap contributor"`, and `attributionText` comes from the registry.
 - **Additive fields:** `capturedAtSourceRaw`, `ingestedAtUtc`, and
   `displayTimeZone` on the site.
 - **Omitted:** `spotteronSiteId`, `spotteronObservationId`,
-  `spotteronMediaId`, `sourceUrl`, `checksumSha256`, `width` and `height`.
+  `spotteronMediaId`, `sourceUrl` and `checksumSha256`.
+
+## Local end-to-end workflow
+
+This proves the whole chain locally, with synthetic data only:
+
+```
+worker manifest → worker-generated thumbnails/previews → FastAPI catalogue
+  → Next.js CoastSnap pages → preview → original download (checksum-verified)
+```
+
+It never touches Spotteron, Nectar, Gadi or `/g/data`.
+
+### Automated (recommended)
+
+From the repository root, using this API virtual environment (which has the
+API, the worker package with its `derivatives` extra, Pillow and httpx), with
+Node.js/npm on PATH:
+
+```powershell
+apps\api\.venv\Scripts\python.exe scripts\coastsnap_e2e_smoke.py
+```
+
+`scripts/coastsnap_e2e_smoke.py` does the following:
+
+1. **Stages synthetic data outside the repository.** It creates a temporary
+   directory under the system temp directory (refusing any location inside
+   the repository). In it, it writes five synthetic Level 1 JPEGs generated
+   with Pillow (1600–3000 px) and a manifest written with the worker's own
+   models. The manifest uses the fixture registry's `TEST_ROOT_ID` /
+   `CS-TEST-SITE`.
+2. **Generates derivatives with the real worker command.** It runs
+   `python -m coastsnap_import.derivatives` with `--max-images 4`, so the
+   fifth observation deliberately has no derivatives. It then runs it again
+   and requires `processed=0 reused=4`.
+3. **Starts FastAPI** on `127.0.0.1` with:
+   - the fixture site registry
+   - the generated manifest
+   - the generated derivatives index
+   - `COASTSNAP_MEDIA_ROOT` = the staging directory
+   - `COASTSNAP_DERIVATIVES_ROOT` = the derivatives output root
+   - `AUSCIN_MEDIA_BASE_URL` = the API origin
+4. **Starts Next.js.** It runs `next build`, then `next start` with
+   `COASTSNAP_API_BASE_URL` set.
+5. **Checks the API and pages.** It checks all of the following:
+   - **API:** thumbnail/preview URLs are present when derivatives exist, and
+     `null` otherwise. Trusted dimensions are returned.
+   - **Pages:** `/coastsnap`, the site archive and a media detail page are
+     API-backed and use the API-mode footer.
+   - **Renditions:** thumbnail and preview responses are JPEGs within
+     400/1600 px.
+   - **Original download:** an attachment named by the opaque media ID, with
+     SHA-256 = manifest, and Range support.
+   - **No fallback:** a missing derivative returns 404 and is never
+     substituted with the original.
+   - **No leaks:** no `/g/data`, staging, repository or internal paths, and
+     no raw Spotteron IDs, in any public response or rendered page.
+6. **Restarts the API with downloads restricted.** `originalUrl` must become
+   null, `/original` must return 403, and the page must drop the download
+   action.
+7. **Cleans up.** It stops both servers (whole process trees) and deletes the
+   staging directory.
+
+It prints one line per check and exits 1 on any failure, with the tail of each
+server log. Options:
+
+| Option | Effect |
+|---|---|
+| `--skip-build` | Reuse an existing `apps/web/.next` build |
+| `--keep-staging` | Keep the staging directory for inspection |
+| `--staging-parent <dir>` | Create staging under this directory |
+| `--npm <path>` | Use this npm |
+
+### Manual walk-through
+
+The same flow by hand. Use any staging directory **outside** the repository.
+The quickest way to get synthetic Level 1 files and a manifest there is to
+keep the automated script's staging directory:
+
+```powershell
+apps\api\.venv\Scripts\python.exe scripts\coastsnap_e2e_smoke.py --keep-staging --skip-build
+# It prints "Staging (outside the repository): <path>". Use that path:
+$staging = "<path printed above>"
+```
+
+Then, in PowerShell:
+
+```powershell
+# Worker derivatives (the real command), twice. The second run reports reused=N.
+cd apps\worker
+.\.venv\Scripts\python.exe -m coastsnap_import.derivatives `
+  --manifest "$staging\manifests\TEST_ROOT_ID.json" --input-root $staging `
+  --output-root "$staging\derivatives-out" --index-output "$staging\derivatives-out\derivatives-index.json"
+
+# FastAPI (second terminal, with $staging set there too)
+cd apps\api
+$env:COASTSNAP_SITE_REGISTRY_PATH = "tests/fixtures/coastsnap/sites-registry.json"
+$env:COASTSNAP_MANIFEST_PATH = "$staging\manifests\TEST_ROOT_ID.json"
+$env:COASTSNAP_DERIVATIVES_INDEX_PATH = "$staging\derivatives-out\derivatives-index.json"
+$env:COASTSNAP_MEDIA_ROOT = $staging
+$env:COASTSNAP_DERIVATIVES_ROOT = "$staging\derivatives-out"
+$env:AUSCIN_MEDIA_BASE_URL = "http://127.0.0.1:8000"
+.\.venv\Scripts\python.exe -m uvicorn auscin_api.main:create_app --factory --host 127.0.0.1 --port 8000
+
+# Next.js (third terminal), then open http://localhost:3000/coastsnap
+cd apps\web
+$env:COASTSNAP_API_BASE_URL = "http://127.0.0.1:8000"
+npm run dev
+
+# Verify one download against the manifest: the hash must equal that entry's
+# level1.checksum.sha256. Take a mediaId from
+# http://127.0.0.1:8000/api/v1/coastsnap/sites/CS-TEST-SITE/observations
+$id = "<mediaId>"
+Invoke-WebRequest "http://127.0.0.1:8000/media/coastsnap/$id/original" -OutFile "$staging\download.jpg"
+(Get-FileHash "$staging\download.jpg" -Algorithm SHA256).Hash.ToLower()
+
+# Clean up: stop both servers first
+Remove-Item -Recurse -Force $staging
+```
+
+### Moving to the real test site
+
+Nothing here contains real values. When the project owner supplies them:
+
+1. **Worker.** Run `--process-local` for `<SPOTTERON_ROOT_ID>` into a staging
+   directory on the Nectar VM, then run the derivatives command against it.
+   See `apps/worker/README.md`.
+2. **Registry.** Add a reviewed entry to a real site registry, never
+   committed with real values:
+   - `site_id: "<COASTSNAP_SITE_SLUG>"`
+   - `spotteron_root_id: "<SPOTTERON_ROOT_ID>"`
+   - real name, region, coordinates, description and time zone
+   - `publication_status`
+   - `original_download_permitted`
+   - licence and attribution text, once decided
+3. **Media roots.** Point `COASTSNAP_MEDIA_ROOT` / `COASTSNAP_DERIVATIVES_ROOT`
+   at local, read-only published copies. Serving directly from
+   `<NCI_PUBLICATION_ROOT>` is out of scope until the NCI serving option in
+   the implementation note (section 5) is agreed. Paths under `/g/data`
+   are refused outside `AUSCIN_API_ENV=production`.
 
 ## Tests
 

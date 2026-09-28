@@ -86,6 +86,28 @@ npm run dev
 The same two servers are available as the `api (synthetic fixtures)` and
 `web (CoastSnap API)` configurations in `.claude/launch.json`.
 
+**Footer wording.** The global footer follows the same switch:
+
+- **Sample mode:** it says all station, camera, media and CoastSnap records
+  are synthetic development data.
+- **API mode:** it says CoastSnap observations are served by the AusCIN
+  catalogue API, and that the other records are still sample data.
+
+It never claims production data, because nothing in the configuration says
+the catalogue is production. Static routes (for example `/` and `/about`)
+are prerendered, so their footer reflects the environment at `next build`.
+Set `COASTSNAP_API_BASE_URL` for the build as well as at runtime to keep
+every page consistent. The `/coastsnap` routes always use the runtime value.
+
+**Dimensions.** Width and height come from the API when the worker's
+derivatives index recorded them. Otherwise the detail page shows "Not
+recorded".
+
+**End-to-end check.** `scripts/coastsnap_e2e_smoke.py` builds this app, runs
+`next start` against a FastAPI catalogue fed by worker-generated derivatives,
+and verifies the CoastSnap pages, preview and download. See "Local end-to-end
+workflow" in `apps/api/README.md`.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

@@ -38,7 +38,21 @@ Status: **in progress.** Date: 2026-09-28.
   - Pages keep sample disclaimers and prototype download wording for sample
     data only. `app/coastsnap/error.tsx` handles API failures.
   - Details are in `apps/web/README.md`, "CoastSnap data source".
-- Steps 5–6 are not started.
+- Step 5 (local end-to-end with synthetic data) is implemented.
+  `scripts/coastsnap_e2e_smoke.py` runs the whole chain: worker manifest →
+  real derivatives command (run twice, reuse checked) → FastAPI → `next start`
+  → preview → original download with checksum verification, plus a
+  downloads-restricted pass. It works in a temporary directory outside the
+  repository and removes it afterwards.
+  - The API now returns trusted `width`/`height` from the derivatives index.
+  - The footer wording follows the data source.
+  - The CoastSnap error boundary has the fixed title
+    "CoastSnap catalogue unavailable | AusCIN".
+  - See "Local end-to-end workflow" in `apps/api/README.md`.
+- Running the importer against the real site is still pending. It needs
+  real values for `<SPOTTERON_ROOT_ID>`, `<COASTSNAP_SITE_SLUG>` and
+  `<NCI_PUBLICATION_ROOT>`, and the open questions below answered.
+- Step 6 (Nectar deployment) is not started.
 
 ## Objective
 
