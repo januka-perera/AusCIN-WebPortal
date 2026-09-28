@@ -49,9 +49,17 @@ Status: **in progress.** Date: 2026-09-28.
   - The CoastSnap error boundary has the fixed title
     "CoastSnap catalogue unavailable | AusCIN".
   - See "Local end-to-end workflow" in `apps/api/README.md`.
-- Running the importer against the real site is still pending. It needs
-  real values for `<SPOTTERON_ROOT_ID>`, `<COASTSNAP_SITE_SLUG>` and
-  `<NCI_PUBLICATION_ROOT>`, and the open questions below answered.
+- The real-site staging workflow is prepared but has not been run:
+  - [`coastsnap-real-site-staging.md`](coastsnap-real-site-staging.md) is the
+    11-step runbook, using placeholders only.
+  - `apps/api/config/coastsnap-site.env.example` is the site configuration
+    template.
+  - `python -m auscin_api.site_config` is the offline configuration
+    validator and registry writer.
+
+  Running it still needs real values for `<SPOTTERON_ROOT_ID>`,
+  `<COASTSNAP_SITE_SLUG>`, the site metadata and `<NCI_PUBLICATION_ROOT>`,
+  and the open questions below answered.
 - Step 6 (Nectar deployment) is not started.
 
 ## Objective

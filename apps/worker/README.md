@@ -60,6 +60,13 @@ path inside the git checkout.
     below. Do not delete the staging directory before you've actually
     looked at the files; there is no undo.
 
+> **Preparing the real test site?** Follow
+> [`docs/implementation/coastsnap-real-site-staging.md`](../../docs/implementation/coastsnap-real-site-staging.md).
+> It wraps this procedure with an offline configuration check
+> (`python -m auscin_api.site_config validate`), a `--plan-only` run, a capped
+> `--process-local` import, derivatives, a local catalogue preview and a
+> checksum comparison. Only then does it cover the SFTP transfer.
+
 > `--transfer` is **not** part of this procedure. Do not run it until
 > the Gadi destination is explicitly configured and reviewed — see the
 > warning at the top of this document and [Run modes, in full](#run-modes-in-full).

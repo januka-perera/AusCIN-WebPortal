@@ -426,7 +426,27 @@ Remove-Item -Recurse -Force $staging
 
 ### Moving to the real test site
 
-Nothing here contains real values. When the project owner supplies them:
+The full, step-by-step runbook is
+[`docs/implementation/coastsnap-real-site-staging.md`](../../docs/implementation/coastsnap-real-site-staging.md).
+It covers the steps from worker preflight to the reviewed SFTP transfer. It
+is driven by one env file created from `config/coastsnap-site.env.example`
+and kept outside the repository. Two offline commands support it:
+
+- `python -m auscin_api.site_config validate --env-file <file> [--for-transfer]`
+  refuses any of the following:
+  - unset or blank values, and unresolved `<...>` placeholders
+  - an invalid slug or root ID, out-of-range coordinates, or an invalid time
+    zone or date
+  - a missing explicit publication or download decision
+  - local paths inside the repository or under `/g/data`
+  - a manifest path that isn't the worker's default
+
+  It never contacts Spotteron, Gadi or NCI.
+- `python -m auscin_api.site_config write-registry --env-file <file> --output <outside-repo>/site-registry.json`
+  writes the reviewed one-site registry (`is_synthetic: false`) from those
+  values only. Nothing defaults to public or downloadable.
+
+In outline, once the project owner supplies the real values:
 
 1. **Worker.** Run `--process-local` for `<SPOTTERON_ROOT_ID>` into a staging
    directory on the Nectar VM, then run the derivatives command against it.

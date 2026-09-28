@@ -14,6 +14,11 @@ desktop.ini
 !.env.example
 *.pem
 *.key
+
+# Filled-in site configuration copies (templates are *.env.example). Real
+# values belong outside the repository; this is defence in depth.
+*.env
+!*.env.example
 *.crt
 
 # Logs
