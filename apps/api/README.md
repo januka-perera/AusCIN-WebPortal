@@ -551,8 +551,36 @@ and kept outside the repository. Two offline commands support it:
 
   It never contacts Spotteron, Gadi or NCI.
 - `python -m auscin_api.site_config write-registry --env-file <file> --output <outside-repo>/site-registry.json`
-  writes the reviewed one-site registry (`is_synthetic: false`) from those
-  values only. Nothing defaults to public or downloadable.
+  writes the reviewed registry (`is_synthetic: false`) from those values
+  only. Nothing defaults to public or downloadable, and no coordinates are
+  written: each site's coordinate comes from its worker manifest.
+
+**Several sites.** Repeat `--env-file` once per site, for `validate` and for
+`write-registry`. There is no directory argument and no file discovery:
+
+```powershell
+python -m auscin_api.site_config write-registry `
+  --env-file C:\outside\site-a.env `
+  --env-file C:\outside\site-b.env `
+  --output C:\outside\site-registry.json
+```
+
+- **Each file stands alone:** with several files, the environment is
+  ignored, so a value set once in the shell can never apply silently to every
+  site. (With a single file, it is overlaid on the environment, as before.)
+- **Validated independently:** every file gets the rules above, and any
+  failure fails the whole command without writing anything.
+- **Conflicts are refused, never merged:** the same file given twice, or two
+  sites sharing a slug, Spotteron root ID, manifest path or derivatives index
+  path.
+- **Deterministic output:** entries are sorted by site ID, and the file is
+  written atomically. The same inputs give the same bytes in any order, and a
+  failure leaves any existing registry untouched.
+- **Clear summary:** the command prints how many entries it wrote, each site
+  ID, and each site's publication and per-level download decisions.
+
+Configure the API with the matching manifests and indexes (see "One site or
+several").
 
 In outline, once the project owner supplies the real values:
 

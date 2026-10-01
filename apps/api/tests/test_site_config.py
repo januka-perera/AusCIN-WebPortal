@@ -23,7 +23,10 @@ from auscin_api.site_config import (
     IGNORED_COORDINATE_FIELDS,
     REQUIRED_FIELDS,
     EnvFileError,
+    RegistryConflictError,
+    build_combined_registry,
     build_registry,
+    registry_json,
     main,
     read_env_file,
     validate_site_config,
@@ -466,3 +469,167 @@ def test_cli_written_registry_has_no_coordinates(outside_repo):
     written = json.loads(output.read_text(encoding="utf-8"))
     assert "latitude" not in written["sites"][0] and "longitude" not in written["sites"][0]
     assert SiteRegistry.model_validate(written).sites[0].latitude is None
+
+
+# --- Several sites, one reviewed registry -------------------------------------------------------
+
+
+def second_site_config(base: Path) -> dict[str, str]:
+    """Another synthetic site sharing the first site's staging and derivatives roots, with its own policy."""
+    config = synthetic_config(base)
+    staging = Path(config["COASTSNAP_STAGING_DIR"])
+    derivatives = Path(config["COASTSNAP_DERIVATIVES_ROOT"])
+    config.update({
+        "SPOTTERON_ROOT_ID": "TEST_ROOT_ID_B",
+        "COASTSNAP_SITE_SLUG": "CS-ANOTHER-BEACH",
+        "COASTSNAP_SITE_NAME": "Another Beach CoastSnap",
+        "COASTSNAP_SITE_PUBLICATION_STATUS": "public",
+        "COASTSNAP_SITE_LEVEL0_DOWNLOAD_PERMITTED": "true",
+        "COASTSNAP_SITE_LEVEL1_DOWNLOAD_PERMITTED": "false",
+        "COASTSNAP_MANIFEST_PATH": str(staging / "manifests" / "TEST_ROOT_ID_B.json"),
+        "COASTSNAP_DERIVATIVES_INDEX_PATH": str(derivatives / "TEST_ROOT_ID_B-index.json"),
+    })
+    return config
+
+
+def write_registry_cli(outside: Path, *env_files: Path, environ: dict[str, str] | None = None) -> tuple[int, str, Path]:
+    output = outside / "registry" / "site-registry.json"
+    args = ["write-registry"]
+    for env_file in env_files:
+        args += ["--env-file", str(env_file)]
+    out = io.StringIO()
+    code = main([*args, "--output", str(output)], environ=environ or {}, out=out)
+    return code, out.getvalue(), output
+
+
+@pytest.fixture
+def two_env_files(outside_repo: Path) -> tuple[Path, Path]:
+    first = write_env(outside_repo / "site-a.env", synthetic_config(outside_repo))
+    second = write_env(outside_repo / "site-b.env", second_site_config(outside_repo))
+    return first, second
+
+
+def test_one_env_file_writes_the_same_registry_as_before(outside_repo):
+    config = synthetic_config(outside_repo)
+    code, text, output = write_registry_cli(outside_repo, write_env(outside_repo / "site.env", config))
+    assert code == 0
+    assert output.read_text(encoding="utf-8") == registry_json(build_registry(config))
+    written = json.loads(output.read_text(encoding="utf-8"))
+    assert written["schema_version"] == 1 and len(written["sites"]) == 1
+    assert "1 site entry: CS-SYNTHETIC-BEACH" in text
+
+
+def test_two_env_files_write_one_registry_with_both_sites_and_their_own_policies(outside_repo, two_env_files):
+    code, text, output = write_registry_cli(outside_repo, *two_env_files)
+    assert code == 0, text
+    sites = {s.site_id: s for s in SiteRegistry.model_validate_json(output.read_text(encoding="utf-8")).sites}
+    assert list(sites) == ["CS-ANOTHER-BEACH", "CS-SYNTHETIC-BEACH"]  # sorted by site ID
+    a, b = sites["CS-SYNTHETIC-BEACH"], sites["CS-ANOTHER-BEACH"]
+    assert (a.spotteron_root_id, a.publication_status, a.level0_download_permitted, a.level1_download_permitted) == (
+        "TEST_ROOT_ID", "embargoed", False, False)
+    assert (b.spotteron_root_id, b.publication_status, b.level0_download_permitted, b.level1_download_permitted) == (
+        "TEST_ROOT_ID_B", "public", True, False)
+    assert "2 site entries: CS-ANOTHER-BEACH, CS-SYNTHETIC-BEACH" in text
+    assert "coordinate comes from its worker manifest" in text
+    assert "explicit settings" in text
+
+
+def test_output_bytes_do_not_depend_on_env_file_order(outside_repo, two_env_files):
+    first, second = two_env_files
+    _, _, output = write_registry_cli(outside_repo, first, second)
+    forward = output.read_bytes()
+    _, _, output = write_registry_cli(outside_repo, second, first)
+    assert output.read_bytes() == forward
+
+
+def test_generated_entries_never_contain_coordinates(outside_repo):
+    legacy = {**second_site_config(outside_repo), "COASTSNAP_SITE_LATITUDE": "-33.5", "COASTSNAP_SITE_LONGITUDE": "151.3"}
+    files = (write_env(outside_repo / "a.env", synthetic_config(outside_repo)), write_env(outside_repo / "b.env", legacy))
+    code, _, output = write_registry_cli(outside_repo, *files)
+    assert code == 0
+    for site in json.loads(output.read_text(encoding="utf-8"))["sites"]:
+        assert "latitude" not in site and "longitude" not in site
+
+
+@pytest.mark.parametrize(
+    ("field", "label"),
+    [
+        ("COASTSNAP_SITE_SLUG", "site ID"),
+        ("SPOTTERON_ROOT_ID", "Spotteron root ID"),
+        ("COASTSNAP_DERIVATIVES_INDEX_PATH", "derivatives index path"),
+    ],
+)
+def test_conflicting_sites_are_refused_and_nothing_is_written(outside_repo, field, label):
+    first = synthetic_config(outside_repo)
+    second = {**second_site_config(outside_repo), field: first[field]}
+    if field == "SPOTTERON_ROOT_ID":  # keep the manifest at the worker's default path for that root
+        second["COASTSNAP_MANIFEST_PATH"] = first["COASTSNAP_MANIFEST_PATH"]
+    files = (write_env(outside_repo / "a.env", first), write_env(outside_repo / "b.env", second))
+    code, text, output = write_registry_cli(outside_repo, *files)
+    assert code == 1
+    assert f"same {label}" in text and "nothing was written" in text
+    assert not output.exists()
+
+
+def test_one_invalid_site_writes_nothing_and_leaves_an_existing_registry_untouched(outside_repo, two_env_files):
+    first, _second = two_env_files
+    broken = write_env(outside_repo / "broken.env", {**second_site_config(outside_repo), "COASTSNAP_SITE_STATE": "ZZ"})
+    output = outside_repo / "registry" / "site-registry.json"
+    output.parent.mkdir(parents=True)
+    output.write_text("previous reviewed registry\n", encoding="utf-8")
+
+    code, text, _ = write_registry_cli(outside_repo, first, broken)
+    assert code == 1
+    assert "== broken.env" in text and "[FAIL] COASTSNAP_SITE_STATE" in text
+    assert "nothing was written" in text
+    assert output.read_text(encoding="utf-8") == "previous reviewed registry\n"
+    assert not list(output.parent.glob("*.tmp"))
+
+
+def test_several_env_files_ignore_the_environment(outside_repo, two_env_files):
+    environ = {"COASTSNAP_SITE_PUBLICATION_STATUS": "public", "COASTSNAP_SITE_LEVEL1_DOWNLOAD_PERMITTED": "true"}
+    code, _, output = write_registry_cli(outside_repo, *two_env_files, environ=environ)
+    assert code == 0
+    registry = SiteRegistry.model_validate_json(output.read_text("utf-8"))
+    site = next(s for s in registry.sites if s.site_id == "CS-SYNTHETIC-BEACH")
+    assert site.publication_status == "embargoed" and site.level1_download_permitted is False
+
+    incomplete = {k: v for k, v in second_site_config(outside_repo).items() if k != "COASTSNAP_SITE_PUBLICATION_STATUS"}
+    files = (two_env_files[0], write_env(outside_repo / "incomplete.env", incomplete))
+    code, text, _ = write_registry_cli(outside_repo, *files, environ=environ)
+    assert code == 1  # the environment never fills a value missing from one of several files
+    assert "[FAIL] COASTSNAP_SITE_PUBLICATION_STATUS is required" in text
+
+
+def test_one_env_file_is_still_overlaid_on_the_environment(outside_repo):
+    config = synthetic_config(outside_repo)
+    status = config.pop("COASTSNAP_SITE_PUBLICATION_STATUS")
+    env_file = write_env(outside_repo / "site.env", config)
+    code, _, output = write_registry_cli(outside_repo, env_file, environ={"COASTSNAP_SITE_PUBLICATION_STATUS": status})
+    assert code == 0 and output.exists()
+
+
+def test_the_same_env_file_twice_is_refused(outside_repo, two_env_files):
+    first, _ = two_env_files
+    code, text, output = write_registry_cli(outside_repo, first, first)
+    assert code == 2 and "given more than once" in text
+    assert not output.exists()
+
+
+def test_validate_checks_every_site_including_transfer_settings(outside_repo, two_env_files):
+    first, second = two_env_files
+    out = io.StringIO()
+    assert main(["validate", "--env-file", str(first), "--env-file", str(second)], environ={}, out=out) == 0
+    assert "== site-a.env" in out.getvalue() and "== site-b.env" in out.getvalue()
+
+    no_root = {k: v for k, v in second_site_config(outside_repo).items() if k != "NCI_PUBLICATION_ROOT"}
+    third = write_env(outside_repo / "no-root.env", no_root)
+    out = io.StringIO()
+    args = ["validate", "--for-transfer", "--env-file", str(first), "--env-file", str(third)]
+    assert main(args, environ={}, out=out) == 1
+    assert "[FAIL] NCI_PUBLICATION_ROOT is required" in out.getvalue()
+
+
+def test_combined_registry_requires_at_least_one_site():
+    with pytest.raises(RegistryConflictError, match="at least one"):
+        build_combined_registry([])

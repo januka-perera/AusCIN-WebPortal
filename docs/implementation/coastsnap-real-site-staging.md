@@ -315,9 +315,24 @@ already separates sites under `root-<root_id>/`. Give each site its own
 manifest (the worker default, `manifests/<root_id>.json`) and its own index
 file, e.g. `$COASTSNAP_DERIVATIVES_ROOT/<root_id>-index.json`.
 
-`write-registry` writes a one-site registry. For several sites, combine the
-reviewed `sites` entries into one registry file by hand and review it again:
-each site keeps its own explicit publication and download decisions.
+Keep one reviewed env file per site, all outside the repository, and write
+one registry for every site by repeating `--env-file` (step 6). No directory
+is ever searched:
+
+```bash
+python -m auscin_api.site_config write-registry \
+  --env-file "$HOME/auscin-site/<ROOT_A>.env" \
+  --env-file "$HOME/auscin-site/<ROOT_B>.env" \
+  --output "$HOME/auscin-site/site-registry.json"
+```
+
+With several env files, each file stands alone: values exported in the shell
+are ignored, so every site's publication and download decisions must be in
+its own file. Each file is validated independently, and any failure writes
+nothing. Two sites sharing a slug, root ID, manifest path or derivatives
+index path are refused, never merged. Entries are sorted by site ID, so the
+output doesn't depend on argument order. The command lists every site and
+its policy. Review the file before starting the API.
 
 Then, in step 7, list every manifest and index explicitly in place of the
 singular settings. Never point the API at a directory:

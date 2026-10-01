@@ -1,14 +1,30 @@
-"""Validate the configuration for one real CoastSnap test site, and write its
-reviewed registry entry. Entirely offline.
+"""Validate the configuration of one or more real CoastSnap sites, and write
+one reviewed registry for them. Entirely offline.
 
     python -m auscin_api.site_config validate --env-file <path/to/coastsnap-site.env> [--for-transfer]
     python -m auscin_api.site_config write-registry --env-file <...> --output <outside-repo>/site-registry.json
+    python -m auscin_api.site_config write-registry --env-file <site-a.env> --env-file <site-b.env> --output <...>
 
 This command never contacts Spotteron, Gadi or NCI, and never reads or writes
-any staged media. It checks only the values in the environment, or in an
-env file overlaid on the environment, and the local path layout they imply.
-The template is `apps/api/config/coastsnap-site.env.example`. Copy it
-**outside** the repository before filling it in.
+any staged media. It checks only the values in the environment or in the env
+files given, and the local path layout they imply. The template is
+`apps/api/config/coastsnap-site.env.example`. Copy it **outside** the
+repository, once per site, before filling it in.
+
+Sites are given only as explicit `--env-file` arguments, one per site; no
+directory is ever searched:
+
+- **No env file:** the values come from the environment (one site).
+- **One env file:** it is overlaid on the environment, as before.
+- **Several env files:** each file stands alone, ignoring the environment, so
+  a value set once in the shell can never apply silently to every site.
+
+Every site is validated independently, and any failure writes nothing. The
+sites are then combined, and conflicts are refused rather than merged: the
+same file given twice, or two sites sharing a slug, a root ID, a manifest
+path or a derivatives-index path. Entries are sorted by site ID, and the file
+is written atomically, so the same inputs always produce the same bytes and a
+failure never leaves partial output.
 
 Rules:
 - **Required and filled in:** every required value must be set and non-blank.
@@ -55,9 +71,10 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -373,6 +390,10 @@ def _validate_publication_root(values: dict[str, str], report: ValidationReport)
 # --- Registry --------------------------------------------------------------------------------
 
 
+class RegistryConflictError(ValueError):
+    """Two site configurations claim the same identity or the same catalogue input."""
+
+
 def build_registry(values: Mapping[str, str]) -> SiteRegistry:
     """The reviewed single-site registry, built only from validated values. Validated again by the API's own model."""
     return SiteRegistry.model_validate(
@@ -401,18 +422,79 @@ def build_registry(values: Mapping[str, str]) -> SiteRegistry:
     )
 
 
+def _path_key(raw: str) -> str:
+    """Lexical comparison key for two configured paths (case-folded where the OS is). Never touches the filesystem."""
+    return os.path.normcase(os.path.abspath(raw.strip()))
+
+
+def build_combined_registry(sites: Sequence[Mapping[str, str]]) -> SiteRegistry:
+    """One reviewed registry from several individually validated site configurations.
+
+    Conflicts are refused, never merged: two configurations with the same site slug,
+    the same Spotteron root ID, or the same manifest or derivatives-index path (which
+    the API's explicit manifest lists would reject). Each site keeps exactly its own
+    publication and download decisions. Entries are sorted by site_id, so input order
+    never changes the output.
+    """
+    if not sites:
+        raise RegistryConflictError("at least one site configuration is required")
+    for name, label, key in (
+        ("COASTSNAP_SITE_SLUG", "site ID", str.strip),
+        ("SPOTTERON_ROOT_ID", "Spotteron root ID", str.strip),
+        ("COASTSNAP_MANIFEST_PATH", "manifest path", _path_key),
+        ("COASTSNAP_DERIVATIVES_INDEX_PATH", "derivatives index path", _path_key),
+    ):
+        seen: set[str] = set()
+        for values in sites:
+            value = key(values[name])
+            if value in seen:
+                raise RegistryConflictError(f"two site configurations use the same {label} ({values[name].strip()})")
+            seen.add(value)
+    entries = sorted((build_registry(values).sites[0] for values in sites), key=lambda site: site.site_id)
+    # Validated once more as a whole by the API's own model.
+    return SiteRegistry.model_validate({"schema_version": 1, "sites": [entry.model_dump() for entry in entries]})
+
+
+def registry_json(registry: SiteRegistry) -> str:
+    """The exact bytes written: deprecated coordinate fields left out, stable key and entry order."""
+    deprecated = {"sites": {"__all__": {"latitude", "longitude"}}}
+    return registry.model_dump_json(indent=2, exclude=deprecated) + "\n"
+
+
 # --- CLI ---------------------------------------------------------------------------------------
 
 
-def _load(args: argparse.Namespace, environ: Mapping[str, str]) -> dict[str, str]:
-    values = dict(environ)
-    if args.env_file:
-        env_path = Path(args.env_file)
-        roots = find_repository_roots()
+@dataclass(frozen=True)
+class SiteSource:
+    label: str
+    """Shown in reports: the env file's name, or "environment"."""
+    values: dict[str, str]
+
+
+def _load(args: argparse.Namespace, environ: Mapping[str, str]) -> list[SiteSource]:
+    """One source per --env-file, in the order given, or the environment alone when there is none.
+
+    With one env file it is overlaid on the environment, as before. With several,
+    each file stands alone: a value set once in the shell (a publication status,
+    say) must never apply silently to every site.
+    """
+    files = [Path(raw) for raw in args.env_file or []]
+    if not files:
+        return [SiteSource("environment", dict(environ))]
+    roots = find_repository_roots()
+    seen: set[str] = set()
+    sources: list[SiteSource] = []
+    for env_path in files:
         if any(env_path.resolve().is_relative_to(root) for root in roots) and not env_path.name.endswith(".example"):
             raise EnvFileError("the filled-in env file must live outside the repository (only *.example templates belong in git)")
-        values.update(read_env_file(env_path))
-    return values
+        key = _path_key(str(env_path))
+        if key in seen:
+            raise EnvFileError(f"{env_path.name} was given more than once")
+        seen.add(key)
+        file_values = read_env_file(env_path)
+        values = {**environ, **file_values} if len(files) == 1 else file_values
+        sources.append(SiteSource(env_path.name, values))
+    return sources
 
 
 def _print_report(report: ValidationReport, out) -> None:
@@ -435,31 +517,62 @@ def _print_report(report: ValidationReport, out) -> None:
     )
 
 
-def main(argv: Optional[list[str]] = None, environ: Optional[Mapping[str, str]] = None, out=sys.stdout) -> int:
-    import os
+def _write_atomically(output: Path, text: str) -> None:
+    """Writes beside the target, then replaces it, so a failure never leaves a partial registry."""
+    output.parent.mkdir(parents=True, exist_ok=True)
+    tmp = output.with_name(output.name + ".tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, output)
+    finally:
+        tmp.unlink(missing_ok=True)
 
-    parser = argparse.ArgumentParser(prog="python -m auscin_api.site_config", description="Offline validation of one real CoastSnap site's configuration.")
+
+def main(argv: Optional[list[str]] = None, environ: Optional[Mapping[str, str]] = None, out=sys.stdout) -> int:
+    parser = argparse.ArgumentParser(
+        prog="python -m auscin_api.site_config",
+        description="Offline validation of reviewed CoastSnap site configurations, one env file per site.",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
     for name, help_text in (
-        ("validate", "Check every value and exit 0 only if all pass."),
-        ("write-registry", "Validate, then write the reviewed single-site registry JSON (outside the repository)."),
+        ("validate", "Check every value of every site and exit 0 only if all pass."),
+        ("write-registry", "Validate every site, then write one reviewed registry JSON (outside the repository)."),
     ):
         command = sub.add_parser(name, help=help_text)
-        command.add_argument("--env-file", help="KEY=VALUE file overlaid on the environment (keep it outside the repository).")
+        command.add_argument(
+            "--env-file", action="append",
+            help="KEY=VALUE file for one site, kept outside the repository. Repeat it once per site. A single file is "
+            "overlaid on the environment; with several, each file stands alone.",
+        )
         command.add_argument("--for-transfer", action="store_true", help="Also require NCI_PUBLICATION_ROOT (for the later SFTP transfer step).")
         if name == "write-registry":
             command.add_argument("--output", required=True, help="Registry JSON to write, outside the repository.")
     args = parser.parse_args(argv)
 
     try:
-        values = _load(args, environ if environ is not None else os.environ)
+        sources = _load(args, environ if environ is not None else os.environ)
     except EnvFileError as exc:
         print(f"[FAIL] {exc}", file=out)
         return 2
 
-    report = validate_site_config(values, for_transfer=args.for_transfer)
-    _print_report(report, out)
-    if not report.ok:
+    all_ok = True
+    for source in sources:
+        if len(sources) > 1:
+            print(f"\n== {source.label}", file=out)
+        report = validate_site_config(source.values, for_transfer=args.for_transfer)
+        _print_report(report, out)
+        all_ok = all_ok and report.ok
+    if not all_ok:
+        if len(sources) > 1:
+            print("\nAt least one site configuration is NOT valid; nothing was written.", file=out)
+        return 1
+    try:
+        registry = build_combined_registry([source.values for source in sources])
+    except RegistryConflictError as exc:
+        print(f"[FAIL] {exc}; nothing was written.", file=out)
+        return 1
+    except ValidationError as exc:  # pragma: no cover - validate_site_config already covers these rules
+        print(f"[FAIL] registry rejected by the API model: {exc}", file=out)
         return 1
     if args.command == "validate":
         return 0
@@ -471,22 +584,26 @@ def main(argv: Optional[list[str]] = None, environ: Optional[Mapping[str, str]] 
     if any(output.resolve().is_relative_to(root) for root in find_repository_roots()):
         print("[FAIL] --output must be outside the repository (a real registry is never committed)", file=out)
         return 2
-    try:
-        registry = build_registry(values)
-    except ValidationError as exc:  # pragma: no cover - validate_site_config already covers these rules
-        print(f"[FAIL] registry rejected by the API model: {exc}", file=out)
-        return 1
-    output.parent.mkdir(parents=True, exist_ok=True)
-    # The deprecated coordinate fields are left out entirely: coordinates come from the worker manifest.
-    deprecated = {"sites": {"__all__": {"latitude", "longitude"}}}
-    output.write_text(registry.model_dump_json(indent=2, exclude=deprecated) + "\n", encoding="utf-8")
-    site = registry.sites[0]
+    _write_atomically(output, registry_json(registry))
+
+    count = len(registry.sites)
     print(
-        f"\nWrote {output.name} for {site.site_id}. Review it before starting the API:\n"
-        f"  publication_status          = {site.publication_status}\n"
-        f"  level0_download_permitted   = {str(site.level0_download_permitted).lower()}  (untouched source image)\n"
-        f"  level1_download_permitted   = {str(site.level1_download_permitted).lower()}  (AusCIN provenance copy)\n"
-        "All three come only from your explicit settings; nothing is published or made downloadable by default.",
+        f"\nWrote {output.name} with {count} site entr{'y' if count == 1 else 'ies'}: "
+        f"{', '.join(site.site_id for site in registry.sites)}. Review it before starting the API.",
+        file=out,
+    )
+    for site in registry.sites:
+        print(
+            f"\n{site.site_id} (root {site.spotteron_root_id}):\n"
+            f"  publication_status          = {site.publication_status}\n"
+            f"  level0_download_permitted   = {str(site.level0_download_permitted).lower()}  (untouched source image)\n"
+            f"  level1_download_permitted   = {str(site.level1_download_permitted).lower()}  (AusCIN provenance copy)",
+            file=out,
+        )
+    print(
+        "\nPublication and download decisions come only from each site's explicit settings; nothing is published or "
+        "made downloadable by default. The registry holds no coordinates: each site's coordinate comes from its worker "
+        "manifest, and a site without a confirmed one is not published.",
         file=out,
     )
     return 0
