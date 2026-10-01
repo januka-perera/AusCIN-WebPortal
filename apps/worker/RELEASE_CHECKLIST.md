@@ -62,8 +62,9 @@ Under `--staging-dir`:
       copy with approved metadata embedded.
 - [ ] `metadata/source-records/observations/<id>.json` — the full raw
       Spotteron record for this observation.
-- [ ] `metadata/source-records/sites/<root-id>.json` — the (synthetic,
-      parameters-only) site record.
+- [ ] `metadata/source-records/sites/<root-id>.json` — the site
+      coordinate audit record: derivation status, tolerance and the
+      image-bearing observations' coordinates it was derived from.
 - [ ] `manifests/<root-id>.json` — the run manifest.
 
 ### Checksum verification

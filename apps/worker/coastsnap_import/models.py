@@ -49,11 +49,33 @@ class TransferState(str, Enum):
     SKIPPED_EXISTING = "skipped_existing"
 
 
+class CoordinateStatus(str, Enum):
+    """Outcome of deriving one site coordinate from the run's observations (see image_resolver.derive_site_coordinates)."""
+
+    CONFIRMED = "confirmed"
+    """Every usable image-bearing observation agrees within the tolerance; latitude/longitude are set."""
+
+    MISSING = "missing"
+    """No image-bearing observation carried any coordinates."""
+
+    INVALID = "invalid"
+    """Coordinates were present, but none were finite, in range and not 0,0."""
+
+    INCONSISTENT = "inconsistent"
+    """Valid coordinates disagree beyond the tolerance, so no single site location is claimed."""
+
+
 class SourceSite(BaseModel):
     """One Spotteron site/root, as returned for the configured root_id.
 
-    Field names are placeholders — TBC against the real v2.4 response.
-    The full raw JSON is written separately under
+    Spotteron exposes no confirmed per-site resource, so latitude and
+    longitude are derived from the confirmed per-observation
+    ``attributes.latitude``/``attributes.longitude`` of this manifest's
+    image-bearing observations (see image_resolver.derive_site_coordinates). They are set
+    only when ``coordinate_status`` is ``confirmed``. Manifests written
+    before discovery existed leave every coordinate field ``None``.
+
+    The derivation's audit record is written separately under
     ``metadata/source-records/sites/`` (see ``build_source_record_paths``)
     rather than duplicated here, per the "don't duplicate raw records in
     every manifest entry" requirement.
@@ -63,6 +85,14 @@ class SourceSite(BaseModel):
     name: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+    coordinate_source: Optional[str] = None
+    """How latitude/longitude were derived, e.g. "spotteron-observation-mean". None when never attempted."""
+    coordinate_status: Optional[CoordinateStatus] = None
+    """None for manifests written before coordinate discovery existed — never treated as confirmed."""
+    coordinate_error: Optional[str] = None
+    """Concise reason when the status is not confirmed."""
+    coordinate_observation_count: Optional[int] = None
+    """How many image-bearing observations with valid coordinates the derivation used."""
 
 
 class SourceObservation(BaseModel):
@@ -81,7 +111,7 @@ class SourceObservation(BaseModel):
     """Parsed from spotted_at_raw and normalised to UTC using the configured source timezone. None if absent/unparseable — such records are excluded from date filtering rather than guessed at."""
     latitude: Optional[float] = None
     longitude: Optional[float] = None
-    """Preserved on the observation itself (not just embedded into Level 1's metadata) since there is no separate, confirmed Spotteron "site" resource this could otherwise live on — see spotteron_client.py's module docstring."""
+    """Preserved on the observation itself (not just embedded into Level 1's metadata) since there is no separate, confirmed Spotteron "site" resource this could otherwise live on — see spotteron_client.py's module docstring. SourceSite's coordinates are derived from these."""
     image_url: Optional[str] = None
     """As resolved by image_resolver.py; may be None if resolution failed."""
     media_reference: Optional[str] = None
@@ -213,9 +243,13 @@ def build_level_relative_path(
     return str(path)
 
 
+def build_site_record_relative_path(root_id: str) -> str:
+    return str(PurePosixPath(METADATA_SOURCE_RECORDS_DIR, "sites", f"{root_id}.json"))
+
+
 def build_source_record_paths(root_id: str, observation_id: str) -> SourceRecordRef:
     return SourceRecordRef(
-        site_record_relative_path=str(PurePosixPath(METADATA_SOURCE_RECORDS_DIR, "sites", f"{root_id}.json")),
+        site_record_relative_path=build_site_record_relative_path(root_id),
         observation_record_relative_path=str(
             PurePosixPath(METADATA_SOURCE_RECORDS_DIR, "observations", f"{observation_id}.json")
         ),

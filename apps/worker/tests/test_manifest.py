@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -221,3 +222,27 @@ def test_load_raises_manifest_error_for_corrupt_json(tmp_path: Path):
     path.write_text("{not valid json", encoding="utf-8")
     with pytest.raises(ManifestError):
         ManifestStore().load(path)
+
+
+def test_v1_manifest_written_before_coordinate_discovery_still_loads(tmp_path: Path):
+    """Manifests from before site-coordinate discovery have a site with only
+    root_id/name/latitude/longitude, all null but root_id. They must still load,
+    with no coordinate status — which is never treated as confirmed."""
+    store = ManifestStore()
+    manifest = store.create(
+        run_id="r1", root_id="37", topic_id=37, date_from_utc=NOW, date_to_utc=NOW, remote_root="/scratch/test",
+    )
+    raw = json.loads(store.upsert_entry(manifest, _entry("1001")).model_dump_json())
+    raw["entries"][0]["site"] = {"root_id": "37", "name": None, "latitude": None, "longitude": None}
+    path = tmp_path / "v1.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    loaded = store.load(path)
+
+    assert loaded is not None and loaded.schema_version == 1
+    site = loaded.entries[0].site
+    assert site.latitude is None and site.longitude is None
+    assert site.coordinate_status is None
+    assert site.coordinate_source is None
+    assert site.coordinate_error is None
+    assert site.coordinate_observation_count is None

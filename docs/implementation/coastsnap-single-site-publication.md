@@ -103,7 +103,7 @@ locally and mirrored under `remote_root` on Gadi:
 ```
 level-0/root-<root_id>/<yyyy>/<mm>/<dd>/images/<observation_id>.<ext>   # byte-for-byte original
 level-1/root-<root_id>/<yyyy>/<mm>/<dd>/images/<observation_id>.<ext>   # copy + embedded XMP
-metadata/source-records/sites/<root_id>.json                           # raw Spotteron (staging only)
+metadata/source-records/sites/<root_id>.json                           # site coordinate audit record (staging only)
 metadata/source-records/observations/<observation_id>.json             # raw Spotteron (staging only)
 manifests/<root_id>.json                                               # default --manifest path
 ```
@@ -113,8 +113,10 @@ Manifest (`models.py`, `schema_version: 1`):
 - `Manifest`: `run_id`, `root_id`, `topic_id`, `date_from_utc`, `date_to_utc`,
   `generated_at_utc`, `remote_root`, `entries[]`.
 - `ManifestEntry`:
-  - `site: SourceSite` — only `root_id` is populated; `name`/lat/lon are `None`
-    (no confirmed Spotteron site resource).
+  - `site: SourceSite` — `root_id`, plus lat/lon derived once per run from the
+    manifest's image-bearing observations (no confirmed Spotteron site resource
+    exists). `coordinate_status` is `confirmed`, `missing`, `invalid` or
+    `inconsistent`; lat/lon are set only when confirmed. `name` stays `None`.
   - `observation: SourceObservation` — `observation_id`, `spotted_at_raw`,
     `spotted_at_utc` (source TZ is an **assumption**, default `UTC`), lat/lon,
     `image_url`, `media_reference`, `contributor_display_name`,

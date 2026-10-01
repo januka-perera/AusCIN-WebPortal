@@ -745,3 +745,136 @@ def test_parse_utc_date_range_accepts_mixed_bare_date_and_iso8601():
     start, end = cli._parse_utc_date_range("2026-08-01", "2026-09-23T12:30:00Z")
     assert start == datetime(2026, 8, 1, 0, 0, 0, tzinfo=timezone.utc)
     assert end == datetime(2026, 9, 23, 12, 30, 0, tzinfo=timezone.utc)
+
+
+# --- Site coordinate discovery ---------------------------------------------------
+
+LOCAL_ARGS_37 = ["--root-id", "37", "--date-from", "2026-08-01", "--date-to", "2026-08-31", "--process-local"]
+
+
+def _site_record(staging_dir: Path, root_id: str) -> dict:
+    return json.loads((staging_dir / "metadata" / "source-records" / "sites" / f"{root_id}.json").read_text())
+
+
+@responses.activate
+def test_site_coordinates_derived_once_and_attached_to_every_entry(base_env: Path):
+    _mock_spots_page()
+    _mock_image_downloads()
+
+    assert cli.main(LOCAL_ARGS_37 + ["--max-images", "5"]) == 0
+
+    manifest = json.loads((base_env / "manifests" / "37.json").read_text())
+    sites = [entry["site"] for entry in manifest["entries"]]
+    assert len(sites) == 2
+    assert sites[0] == sites[1]  # one site record, not one per image
+    site = sites[0]
+    assert site["root_id"] == "37"
+    assert site["latitude"] == pytest.approx(-33.45)
+    assert site["longitude"] == pytest.approx(151.4)
+    assert site["coordinate_status"] == "confirmed"
+    assert site["coordinate_source"] == "spotteron-observation-mean"
+    assert site["coordinate_error"] is None
+    assert site["coordinate_observation_count"] == 2
+
+    record = _site_record(base_env, "37")
+    assert record["coordinate_derivation"]["status"] == "confirmed"
+    assert record["coordinate_derivation"]["tolerance_metres"] == 100.0
+    assert [o["observation_id"] for o in record["image_bearing_observations"]] == ["1001", "1002"]
+    assert record["last_run"] == {"max_images": 5, "max_images_reached": False}
+    # An audit record of the derivation only: no paths, no raw image data.
+    assert set(record) == {"root_id", "topic_id", "note", "coordinate_derivation", "image_bearing_observations", "last_run"}
+
+
+@responses.activate
+def test_capped_run_is_recorded_as_covering_only_ingested_images(base_env: Path, capsys: pytest.CaptureFixture):
+    _mock_spots_page()
+    _mock_image_downloads()
+
+    assert cli.main(LOCAL_ARGS_37 + ["--max-images", "1"]) == 0
+
+    record = _site_record(base_env, "37")
+    assert record["last_run"] == {"max_images": 1, "max_images_reached": True}
+    assert record["coordinate_derivation"]["observation_count"] == 1
+    assert "covers only the images ingested" in capsys.readouterr().out
+
+
+@responses.activate
+def test_site_coordinates_rerun_is_deterministic(base_env: Path):
+    _mock_spots_page()
+    _mock_image_downloads()
+
+    assert cli.main(LOCAL_ARGS_37 + ["--max-images", "5"]) == 0
+    first_record = _site_record(base_env, "37")
+    first_sites = [e["site"] for e in json.loads((base_env / "manifests" / "37.json").read_text())["entries"]]
+
+    assert cli.main(LOCAL_ARGS_37 + ["--max-images", "5"]) == 0
+    manifest = json.loads((base_env / "manifests" / "37.json").read_text())
+
+    assert len(manifest["entries"]) == 2  # no duplicated entries or sites
+    assert [e["site"] for e in manifest["entries"]] == first_sites
+    assert _site_record(base_env, "37") == first_record
+
+
+@responses.activate
+def test_inconsistent_site_coordinates_are_recorded_without_failing_the_import(base_env: Path):
+    page = load_fixture("spotteron_page_1.json")
+    page["data"][1]["attributes"]["latitude"] = -34.45  # ~111 km from spot 1001
+    responses.add(responses.GET, SPOTS_URL, json=page, status=200)
+    _mock_image_downloads()
+
+    assert cli.main(LOCAL_ARGS_37 + ["--max-images", "5"]) == 0
+
+    manifest = json.loads((base_env / "manifests" / "37.json").read_text())
+    assert len(manifest["entries"]) == 2  # images still ingested
+    site = manifest["entries"][0]["site"]
+    assert site["coordinate_status"] == "inconsistent"
+    assert site["latitude"] is None and site["longitude"] is None
+    assert "tolerance" in site["coordinate_error"]
+
+
+@responses.activate
+def test_missing_site_coordinates_are_recorded_without_failing_the_import(base_env: Path):
+    page = load_fixture("spotteron_page_1.json")
+    for spot in page["data"]:
+        del spot["attributes"]["latitude"]
+        del spot["attributes"]["longitude"]
+    responses.add(responses.GET, SPOTS_URL, json=page, status=200)
+    _mock_image_downloads()
+
+    assert cli.main(LOCAL_ARGS_37 + ["--max-images", "5"]) == 0
+
+    site = json.loads((base_env / "manifests" / "37.json").read_text())["entries"][0]["site"]
+    assert site["coordinate_status"] == "missing"
+    assert site["latitude"] is None and site["longitude"] is None
+
+
+@responses.activate
+def test_site_record_written_when_no_image_bearing_observation_was_ingested(base_env: Path):
+    """Every image fails to resolve (no HEAD/GET mocked), so no entry is ingested.
+    The site record still records why there is no coordinate; no empty manifest is created."""
+    _mock_spots_page()
+
+    assert cli.main(LOCAL_ARGS_37 + ["--max-images", "5"]) == 1  # the image failures, not the site
+
+    record = _site_record(base_env, "37")
+    assert record["coordinate_derivation"]["status"] == "missing"
+    assert record["coordinate_derivation"]["latitude"] is None
+    assert record["image_bearing_observations"] == []
+    assert not (base_env / "manifests" / "37.json").exists()
+
+
+@responses.activate
+def test_live_response_shape_site_coordinates_are_confirmed(base_env: Path):
+    responses.add(responses.GET, SPOTS_URL, json=load_fixture("spotteron_live_shape_page.json"), status=200)
+    live_image_url = "https://files.spotteron.com/images/spots/000037/2026/09/23/gkckxusp53of89ksukepgv6x6rwx7o7v.jpg"
+    responses.add(responses.HEAD, live_image_url, status=200, content_type="image/jpeg")
+    responses.add(responses.GET, live_image_url, body=SAMPLE_IMAGE_BYTES, status=200, content_type="image/jpeg")
+
+    args = ["--root-id", "487447", "--date-from", "2026-09-01", "--date-to", "2026-09-30", "--process-local"]
+    assert cli.main(args) == 0
+
+    site = json.loads((base_env / "manifests" / "487447.json").read_text())["entries"][0]["site"]
+    # The other root_id's spot (-33.9, 151.2) was filtered out and never averaged in.
+    assert site["coordinate_status"] == "confirmed"
+    assert site["latitude"] == -26.681912
+    assert site["longitude"] == 153.137469

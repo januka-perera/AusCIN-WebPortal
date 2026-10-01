@@ -37,17 +37,27 @@ read) before being accepted. A failed validation raises
 reference, the attempted URL and the HTTP status, so a failure is
 diagnosable without re-running anything.
 
-UNCONFIRMED: latitude/longitude, contributor name and
-attribution-permission field names. Each is tried as an ordered list
-of candidate JSON paths; absence never becomes a guess.
+CONFIRMED against the real live response (see
+spotteron_client.py): per-spot ``attributes.latitude`` and
+``attributes.longitude`` as JSON numbers. The other latitude/longitude
+candidates below remain unconfirmed fallbacks. ``derive_site_coordinates``
+turns these per-spot values into one site coordinate; nothing here
+infers a location from filenames, pixels or geocoding.
+
+UNCONFIRMED: contributor name and attribution-permission field names.
+Each is tried as an ordered list of candidate JSON paths; absence never
+becomes a guess.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 import requests
+
+from .models import CoordinateStatus, SourceObservation
 
 _DIRECT_URL_CANDIDATES: tuple[tuple[str, ...], ...] = (
     ("attributes", "image_url"),
@@ -284,6 +294,116 @@ def resolve_latitude(raw_spot: dict[str, Any]) -> Optional[float]:
 
 def resolve_longitude(raw_spot: dict[str, Any]) -> Optional[float]:
     return _first_float_match(raw_spot, _LONGITUDE_CANDIDATES)
+
+
+COORDINATE_SOURCE_OBSERVATION_MEAN = "spotteron-observation-mean"
+"""SourceSite.coordinate_source value: the mean of the confirmed per-spot
+``attributes.latitude``/``attributes.longitude`` fields."""
+
+SITE_COORDINATE_TOLERANCE_METRES = 100.0
+"""Maximum distance any one observation may lie from the site's mean coordinate.
+
+CoastSnap photos are taken from one fixed camera mount, but each spot's
+coordinates come from the contributor's phone, so small GPS scatter is
+expected. 100 m allows for that scatter while still rejecting a root
+whose observations point at clearly different places (a second site, a
+mis-tagged upload). Above the tolerance, no site location is claimed."""
+
+_EARTH_RADIUS_METRES = 6_371_008.8
+
+
+@dataclass(frozen=True)
+class SiteCoordinates:
+    """Result of derive_site_coordinates. latitude/longitude are set only when status is CONFIRMED."""
+
+    status: CoordinateStatus
+    latitude: Optional[float]
+    longitude: Optional[float]
+    observation_count: int
+    """Image-bearing observations with valid coordinates that the result is based on."""
+    error: Optional[str] = None
+
+
+def _is_valid_coordinate(latitude: float, longitude: float) -> bool:
+    return (
+        math.isfinite(latitude)
+        and math.isfinite(longitude)
+        and -90.0 <= latitude <= 90.0
+        and -180.0 <= longitude <= 180.0
+        and not (latitude == 0.0 and longitude == 0.0)
+    )
+
+
+def _distance_metres(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Equirectangular approximation: accurate to well under a metre at the
+    ~100 m scale this is used for, with no geospatial dependency. Points on
+    opposite sides of the antimeridian come out far apart, so such a site
+    is reported inconsistent rather than given a wrong mean."""
+    mean_lat = math.radians((lat1 + lat2) / 2)
+    dx = math.radians(lon2 - lon1) * math.cos(mean_lat)
+    dy = math.radians(lat2 - lat1)
+    return _EARTH_RADIUS_METRES * math.hypot(dx, dy)
+
+
+def derive_site_coordinates(observations: Iterable[SourceObservation]) -> SiteCoordinates:
+    """Derives one site coordinate from the image-bearing observations of a site.
+
+    Pure and order-independent: the same observations always give the
+    same result. Rules:
+
+    1. Observations with neither ``image_url`` nor ``media_reference`` are ignored.
+    2. Observations missing either coordinate are ignored.
+    3. Non-finite, out-of-range and exactly 0,0 coordinates are rejected;
+       the observation is ignored, never used.
+    4. No valid coordinate left: MISSING if none were present at all,
+       INVALID if some were present but all were rejected.
+    5. Any valid coordinate further than SITE_COORDINATE_TOLERANCE_METRES
+       from the mean: INCONSISTENT.
+    6. Otherwise CONFIRMED, at the arithmetic mean of the valid coordinates.
+
+    The result covers only the observations passed in. The CLI passes
+    the manifest's entries — the images this site actually has — so a
+    run capped by --max-images confirms the coordinate of the images it
+    ingested, not of every spot Spotteron holds for the root.
+    """
+    valid: list[tuple[float, float]] = []
+    rejected = 0
+    for observation in observations:
+        if not (observation.image_url or observation.media_reference):
+            continue
+        if observation.latitude is None or observation.longitude is None:
+            continue
+        if _is_valid_coordinate(observation.latitude, observation.longitude):
+            valid.append((observation.latitude, observation.longitude))
+        else:
+            rejected += 1
+
+    if not valid:
+        if rejected:
+            return SiteCoordinates(
+                status=CoordinateStatus.INVALID, latitude=None, longitude=None, observation_count=0,
+                error=f"all {rejected} image-bearing observation coordinate(s) were non-finite, out of range or 0,0",
+            )
+        return SiteCoordinates(
+            status=CoordinateStatus.MISSING, latitude=None, longitude=None, observation_count=0,
+            error="no image-bearing observation has latitude and longitude",
+        )
+
+    # fsum is exactly rounded, so the mean doesn't depend on observation order.
+    mean_lat = math.fsum(lat for lat, _ in valid) / len(valid)
+    mean_lon = math.fsum(lon for _, lon in valid) / len(valid)
+    furthest = max(_distance_metres(mean_lat, mean_lon, lat, lon) for lat, lon in valid)
+    if furthest > SITE_COORDINATE_TOLERANCE_METRES:
+        return SiteCoordinates(
+            status=CoordinateStatus.INCONSISTENT, latitude=None, longitude=None, observation_count=len(valid),
+            error=(
+                f"observation coordinates spread {furthest:.0f} m from their mean, beyond the "
+                f"{SITE_COORDINATE_TOLERANCE_METRES:.0f} m tolerance"
+            ),
+        )
+    return SiteCoordinates(
+        status=CoordinateStatus.CONFIRMED, latitude=mean_lat, longitude=mean_lon, observation_count=len(valid)
+    )
 
 
 def resolve_contributor_display_name(raw_spot: dict[str, Any]) -> Optional[str]:

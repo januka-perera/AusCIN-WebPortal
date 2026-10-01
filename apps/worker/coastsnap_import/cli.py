@@ -100,8 +100,11 @@ from .preflight import (
     check_staging_dir_writable,
 )
 from .image_resolver import (
+    COORDINATE_SOURCE_OBSERVATION_MEAN,
+    SITE_COORDINATE_TOLERANCE_METRES,
     ImageUrlResolutionError,
     ImageUrlResolver,
+    derive_site_coordinates,
     peek_image_reference_or_url,
     resolve_attribution_permitted,
     resolve_contributor_display_name,
@@ -112,6 +115,8 @@ from .image_resolver import (
 from .manifest import ManifestError, ManifestStore
 from .metadata_embedder import MetadataEmbeddingError, MetadataFields, build_embedder
 from .models import (
+    CoordinateStatus,
+    Manifest,
     ManifestEntry,
     ProductLevel,
     SourceObservation,
@@ -121,6 +126,7 @@ from .models import (
     build_level_relative_path,
     build_manifest_relative_path,
     build_site_directory_id,
+    build_site_record_relative_path,
     build_source_record_paths,
 )
 from .processor import Level0Level1Processor, ProcessingError, compute_sha256, infer_extension
@@ -303,19 +309,11 @@ def run(
     )
     manifest = manifest.model_copy(update={"run_id": run_id, "generated_at_utc": datetime.now(timezone.utc)})
 
-    # Site record: Spotteron does not appear (per current knowledge) to
-    # expose a distinct "site" resource separate from a topic/root_id
-    # filter on spots, so this is derived only from the ingestion
-    # parameters, not fetched. TBC — see final report.
+    # Spotteron exposes no confirmed per-site resource, so no site record
+    # is fetched. Entries carry this bare site until the end of the run,
+    # when _finalise_site derives its coordinates once from every
+    # image-bearing observation in the manifest.
     site = SourceSite(root_id=root_id)
-    site_raw_record = {
-        "root_id": root_id,
-        "topic_id": topic_id,
-        "note": (
-            "No distinct Spotteron 'site' API resource was assumed to exist for this "
-            "proof of concept; this record reflects the ingestion parameters only."
-        ),
-    }
 
     image_resolver = ImageUrlResolver(
         image_base_url=config.spotteron_image_base_url,
@@ -351,6 +349,8 @@ def run(
     reused_local = 0
     skipped_remote_verified = 0
     failed = 0
+    examined = 0
+    spotteron_failed = False
 
     try:
         raw_spots = client.iter_spots(topic_id=topic_id, root_id=root_id, page_limit=config.spotteron_page_limit)
@@ -361,6 +361,7 @@ def run(
         limited = itertools.islice(date_filtered, max_images)
 
         for raw_spot in limited:
+            examined += 1
             try:
                 observation = _parse_observation(raw_spot, root_id, config.spotteron_source_timezone)
             except ProcessingError as exc:
@@ -382,7 +383,6 @@ def run(
                 outcome = _ingest_one(
                     raw_spot=raw_spot,
                     site=site,
-                    site_raw_record=site_raw_record,
                     observation=observation,
                     root_id=root_id,
                     processor=processor,
@@ -410,10 +410,20 @@ def run(
                 processed += 1
     except SpotteronClientError as exc:
         print(f"[fatal] Spotteron request failed: {exc}", file=sys.stderr)
-        return 1
+        spotteron_failed = True
     finally:
         if transport is not None:
             transport.close()
+
+    # Also after a Spotteron failure, so entries already saved this run get a consistent site.
+    manifest = _finalise_site(
+        manifest, root_id=root_id, topic_id=topic_id, staging_dir=config.staging_dir,
+        max_images=max_images, max_images_reached=(examined >= max_images),
+    )
+    if manifest.entries:
+        manifest_store.save(manifest, manifest_path)
+    if spotteron_failed:
+        return 1
 
     print(
         f"Run complete: processed={processed} reused_local={reused_local} "
@@ -458,7 +468,6 @@ def _ingest_one(
     *,
     raw_spot: dict,
     site: SourceSite,
-    site_raw_record: dict,
     observation: SourceObservation,
     root_id: str,
     processor: Level0Level1Processor,
@@ -477,8 +486,8 @@ def _ingest_one(
     assert observation.spotted_at_utc is not None  # guaranteed by date filtering upstream
 
     # Preserve the full raw record separately — never duplicated into the manifest entry.
+    # The site record at record_ref.site_record_relative_path is written once per run by _finalise_site.
     record_ref = build_source_record_paths(root_id, observation.observation_id)
-    _write_json(staging_dir / record_ref.site_record_relative_path, site_raw_record)
     _write_json(staging_dir / record_ref.observation_record_relative_path, raw_spot)
 
     resolution = image_resolver.resolve(raw_spot, observation.observation_id)
@@ -578,6 +587,71 @@ def _ingest_one(
         ingested_at_utc=datetime.now(timezone.utc),
     )
     return IngestOutcome(entry=entry, fully_reused_locally=(level0_reused and level1_reused))
+
+
+def _finalise_site(
+    manifest: Manifest, *, root_id: str, topic_id: int, staging_dir: Path, max_images: int, max_images_reached: bool,
+) -> Manifest:
+    """Derives the site coordinate once from every image-bearing observation
+    in the manifest (this run's and earlier runs'), writes the site's audit
+    record and attaches the same SourceSite to every entry.
+
+    Deterministic: the record holds no timestamps and lists observations in
+    ID order, so rerunning over the same manifest rewrites identical bytes.
+    A missing/invalid/inconsistent coordinate never fails the run; it is
+    recorded here and public eligibility is decided by the API.
+    """
+    result = derive_site_coordinates(entry.observation for entry in manifest.entries)
+    site = SourceSite(
+        root_id=root_id,
+        latitude=result.latitude,
+        longitude=result.longitude,
+        coordinate_source=COORDINATE_SOURCE_OBSERVATION_MEAN,
+        coordinate_status=result.status,
+        coordinate_error=result.error,
+        coordinate_observation_count=result.observation_count,
+    )
+    image_bearing = sorted(
+        (e.observation for e in manifest.entries if e.observation.image_url or e.observation.media_reference),
+        key=lambda o: o.observation_id,
+    )
+    _write_json(
+        staging_dir / build_site_record_relative_path(root_id),
+        {
+            "root_id": root_id,
+            "topic_id": topic_id,
+            "note": (
+                "Spotteron exposes no confirmed per-site resource. The site coordinate is derived from the "
+                "per-spot attributes.latitude/attributes.longitude of this manifest's image-bearing "
+                "observations, whose raw records are under metadata/source-records/observations/. It covers "
+                "only the images ingested into this manifest, not every spot Spotteron holds for the root."
+            ),
+            "coordinate_derivation": {
+                "method": COORDINATE_SOURCE_OBSERVATION_MEAN,
+                "tolerance_metres": SITE_COORDINATE_TOLERANCE_METRES,
+                "status": result.status.value,
+                "latitude": result.latitude,
+                "longitude": result.longitude,
+                "observation_count": result.observation_count,
+                "error": result.error,
+            },
+            "image_bearing_observations": [
+                {"observation_id": o.observation_id, "latitude": o.latitude, "longitude": o.longitude}
+                for o in image_bearing
+            ],
+            "last_run": {"max_images": max_images, "max_images_reached": max_images_reached},
+        },
+    )
+    if result.status is CoordinateStatus.CONFIRMED:
+        print(
+            f"[site] root_id={root_id} coordinates confirmed from {result.observation_count} observation(s): "
+            f"{result.latitude:.6f}, {result.longitude:.6f}"
+        )
+    else:
+        print(f"[site] root_id={root_id} coordinates {result.status.value}: {result.error}")
+    if max_images_reached:
+        print(f"[site] --max-images={max_images} was reached; the coordinate covers only the images ingested so far.")
+    return manifest.model_copy(update={"entries": [e.model_copy(update={"site": site}) for e in manifest.entries]})
 
 
 def _display_remote_path(remote_root: str, relative_path: str) -> str:
