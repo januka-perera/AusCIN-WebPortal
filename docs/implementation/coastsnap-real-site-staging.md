@@ -91,8 +91,10 @@ all of the following:
 - nothing is unset, blank or still a `<...>` / `CHANGE_ME` / `TODO`
   placeholder
 - the slug and root ID are well formed
-- coordinates are in range, the time zone is a valid IANA name, and the
-  establishment date is not in the future
+- the time zone is a valid IANA name, and the establishment date is not in
+  the future
+- coordinates are **not** entered: the worker derives them from the source
+  observations, and the API publishes the site only once they are confirmed
 - publication status and download permission are explicit
 - local paths are absolute, outside the repository and not under `/g/data`
 - the manifest path is the worker's default

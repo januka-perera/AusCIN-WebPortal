@@ -8,8 +8,6 @@
       "state": "NSW",
       "region": "Synthetic test region",
       "description": "Synthetic CoastSnap site used only by the API test suite and local development. Not a real location.",
-      "latitude": -33.0,
-      "longitude": 151.0,
       "display_time_zone": "Australia/Sydney",
       "status": "active",
       "established_since": "2026-07-01",

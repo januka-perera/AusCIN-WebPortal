@@ -179,9 +179,23 @@ endpoint instead.
 
 ### Visibility
 
-Only registry entries with `publication_status: "public"` are exposed.
-Observations are only exposed when the manifest's `root_id` maps to such a
-site. A manifest or media file on disk never publishes anything by itself.
+A site, and its observations, are exposed only when all three hold:
+
+1. its registry entry has `publication_status: "public"`;
+2. the manifest's site record has `coordinate_status: "confirmed"`. The
+   worker derives this coordinate from the source observations, and it is the
+   only source of a site's public `latitude`/`longitude`. Registry
+   `latitude`/`longitude` are deprecated, optional and never used;
+3. the manifest has at least one presentable observation (Level 0, Level 1
+   and a capture time).
+
+A site failing any rule is a 404, the same as an unknown site, and is not
+counted by `/api/v1/health`. Manifests written before coordinate discovery
+(`coordinate_status` absent) still load but publish nothing until the
+worker is rerun. Entries that disagree on the site record (an interrupted
+worker run) also publish nothing until the worker is rerun. A record marked
+`confirmed` without valid coordinates is rejected at load. A manifest or
+media file on disk never publishes anything by itself.
 
 ### Load-time path safety
 
@@ -469,8 +483,10 @@ and kept outside the repository. Two offline commands support it:
 - `python -m auscin_api.site_config validate --env-file <file> [--for-transfer]`
   refuses any of the following:
   - unset or blank values, and unresolved `<...>` placeholders
-  - an invalid slug or root ID, out-of-range coordinates, or an invalid time
-    zone or date
+  - an invalid slug or root ID, or an invalid time zone or date
+  - out-of-range legacy `COASTSNAP_SITE_LATITUDE`/`LONGITUDE` values. These
+    are no longer needed: coordinates come from the worker, and any values
+    set here are ignored.
   - a missing explicit publication decision, or a missing explicit
     `COASTSNAP_SITE_LEVEL0_DOWNLOAD_PERMITTED` /
     `COASTSNAP_SITE_LEVEL1_DOWNLOAD_PERMITTED` decision (the retired single
@@ -492,7 +508,8 @@ In outline, once the project owner supplies the real values:
    committed with real values:
    - `site_id: "<COASTSNAP_SITE_SLUG>"`
    - `spotteron_root_id: "<SPOTTERON_ROOT_ID>"`
-   - real name, region, coordinates, description and time zone
+   - real name, region, description and time zone (no coordinates: those
+     come from the worker manifest)
    - `publication_status`
    - `level0_download_permitted` and `level1_download_permitted`, each set
      deliberately

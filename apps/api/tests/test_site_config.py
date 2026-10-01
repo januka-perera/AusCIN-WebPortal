@@ -20,6 +20,7 @@ import pytest
 from auscin_api.schemas import SiteRegistry
 from auscin_api.site_config import (
     ALL_FIELDS,
+    IGNORED_COORDINATE_FIELDS,
     REQUIRED_FIELDS,
     EnvFileError,
     build_registry,
@@ -43,8 +44,6 @@ def synthetic_config(base: Path) -> dict[str, str]:
         "COASTSNAP_SITE_STATE": "NSW",
         "COASTSNAP_SITE_REGION": "Synthetic test region",
         "COASTSNAP_SITE_DESCRIPTION": "A synthetic CoastSnap site used only to test the configuration validator.",
-        "COASTSNAP_SITE_LATITUDE": "-33.5",
-        "COASTSNAP_SITE_LONGITUDE": "151.3",
         "COASTSNAP_SITE_TIME_ZONE": "Australia/Sydney",
         "COASTSNAP_SITE_ESTABLISHED_SINCE": "2025-01-15",
         "COASTSNAP_SITE_ATTRIBUTION_TEXT": "CoastSnap community photo (synthetic)",
@@ -226,7 +225,7 @@ def test_invalid_root_id_is_refused(config, repo, root_id):
         ("0", "0", "COASTSNAP_SITE_LATITUDE"),
     ],
 )
-def test_invalid_coordinates_are_refused(config, repo, latitude, longitude, field):
+def test_invalid_legacy_coordinates_are_still_refused_when_present(config, repo, latitude, longitude, field):
     config["COASTSNAP_SITE_LATITUDE"] = latitude
     config["COASTSNAP_SITE_LONGITUDE"] = longitude
     assert field in validate(config, repo).errors
@@ -426,3 +425,44 @@ def test_cli_write_registry_refuses_output_inside_the_repository(outside_repo):
 
 def test_cli_reads_values_from_the_environment_without_an_env_file(outside_repo):
     assert main(["validate"], environ=synthetic_config(outside_repo), out=io.StringIO()) == 0
+
+
+# --- Coordinates are discovered by the worker, never entered ------------------------------------
+
+
+def test_coordinates_are_not_required_or_in_the_template(config, repo):
+    assert not set(IGNORED_COORDINATE_FIELDS) & set(ALL_FIELDS)
+    assert not set(IGNORED_COORDINATE_FIELDS) & set(read_env_file(TEMPLATE))
+    assert "COASTSNAP_SITE_LATITUDE" not in config
+    report = validate(config, repo)
+    assert report.ok, report.errors
+    assert not any("LATITUDE" in note for note in report.notes)
+
+
+def test_registry_never_contains_coordinates(config):
+    (site,) = build_registry(config).sites
+    assert site.latitude is None and site.longitude is None
+    legacy = build_registry({**config, "COASTSNAP_SITE_LATITUDE": "-33.5", "COASTSNAP_SITE_LONGITUDE": "151.3"})
+    assert legacy.sites[0].latitude is None and legacy.sites[0].longitude is None
+
+
+def test_legacy_coordinates_are_accepted_but_noted_as_ignored(config, repo):
+    report = validate({**config, "COASTSNAP_SITE_LATITUDE": "-33.5", "COASTSNAP_SITE_LONGITUDE": "151.3"}, repo)
+    assert report.ok, report.errors
+    assert any("ignored" in note and "worker derives" in note for note in report.notes)
+
+
+def test_cli_reports_an_invalid_legacy_coordinate(outside_repo):
+    config = {**synthetic_config(outside_repo), "COASTSNAP_SITE_LATITUDE": "-91", "COASTSNAP_SITE_LONGITUDE": "151"}
+    out = io.StringIO()
+    assert main(["validate"], environ=config, out=out) == 1
+    assert "[FAIL] COASTSNAP_SITE_LATITUDE must be between -90 and 90" in out.getvalue()
+
+
+def test_cli_written_registry_has_no_coordinates(outside_repo):
+    config = {**synthetic_config(outside_repo), "COASTSNAP_SITE_LATITUDE": "-33.5", "COASTSNAP_SITE_LONGITUDE": "151.3"}
+    output = outside_repo / "registry" / "site-registry.json"
+    assert main(["write-registry", "--output", str(output)], environ=config, out=io.StringIO()) == 0
+    written = json.loads(output.read_text(encoding="utf-8"))
+    assert "latitude" not in written["sites"][0] and "longitude" not in written["sites"][0]
+    assert SiteRegistry.model_validate(written).sites[0].latitude is None

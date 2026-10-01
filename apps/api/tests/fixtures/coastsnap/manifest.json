@@ -11,8 +11,12 @@
       "site": {
         "root_id": "TEST_ROOT_ID",
         "name": null,
-        "latitude": null,
-        "longitude": null
+        "latitude": -33.0,
+        "longitude": 151.0,
+        "coordinate_source": "spotteron-observation-mean",
+        "coordinate_status": "confirmed",
+        "coordinate_error": null,
+        "coordinate_observation_count": 6
       },
       "observation": {
         "observation_id": "TEST_OBS_0001",
@@ -76,8 +80,12 @@
       "site": {
         "root_id": "TEST_ROOT_ID",
         "name": null,
-        "latitude": null,
-        "longitude": null
+        "latitude": -33.0,
+        "longitude": 151.0,
+        "coordinate_source": "spotteron-observation-mean",
+        "coordinate_status": "confirmed",
+        "coordinate_error": null,
+        "coordinate_observation_count": 6
       },
       "observation": {
         "observation_id": "TEST_OBS_0002",
@@ -141,8 +149,12 @@
       "site": {
         "root_id": "TEST_ROOT_ID",
         "name": null,
-        "latitude": null,
-        "longitude": null
+        "latitude": -33.0,
+        "longitude": 151.0,
+        "coordinate_source": "spotteron-observation-mean",
+        "coordinate_status": "confirmed",
+        "coordinate_error": null,
+        "coordinate_observation_count": 6
       },
       "observation": {
         "observation_id": "TEST_OBS_0003",
@@ -206,8 +218,12 @@
       "site": {
         "root_id": "TEST_ROOT_ID",
         "name": null,
-        "latitude": null,
-        "longitude": null
+        "latitude": -33.0,
+        "longitude": 151.0,
+        "coordinate_source": "spotteron-observation-mean",
+        "coordinate_status": "confirmed",
+        "coordinate_error": null,
+        "coordinate_observation_count": 6
       },
       "observation": {
         "observation_id": "TEST_OBS_0004",
@@ -271,8 +287,12 @@
       "site": {
         "root_id": "TEST_ROOT_ID",
         "name": null,
-        "latitude": null,
-        "longitude": null
+        "latitude": -33.0,
+        "longitude": 151.0,
+        "coordinate_source": "spotteron-observation-mean",
+        "coordinate_status": "confirmed",
+        "coordinate_error": null,
+        "coordinate_observation_count": 6
       },
       "observation": {
         "observation_id": "TEST_OBS_0005",
@@ -354,8 +374,12 @@
       "site": {
         "root_id": "TEST_ROOT_ID",
         "name": null,
-        "latitude": null,
-        "longitude": null
+        "latitude": -33.0,
+        "longitude": 151.0,
+        "coordinate_source": "spotteron-observation-mean",
+        "coordinate_status": "confirmed",
+        "coordinate_error": null,
+        "coordinate_observation_count": 6
       },
       "observation": {
         "observation_id": "TEST_OBS_0006",

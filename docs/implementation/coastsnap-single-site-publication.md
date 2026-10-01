@@ -349,6 +349,7 @@ station/camera pages, the `CoastSnapRepository` interface.
 - **Spotteron source timezone** is still assumed UTC; displayed capture times
   are only as correct as that assumption. The UI should label the time zone.
 - **NCI serving path** (§5) — which option NCI supports for the VM.
-- **Site metadata** (name, region, coordinates, description) must be supplied
-  by the project owner for the registry.
+- **Site metadata** (name, region, description) must be supplied by the
+  project owner for the registry. Coordinates are derived by the worker from
+  source observations and are never entered in the registry.
 - Offset pagination retained for now; cursor pagination deferred.

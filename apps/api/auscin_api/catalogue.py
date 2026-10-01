@@ -7,9 +7,17 @@ The manifest and the derivatives index are parsed with the worker's own models
 path, an inconsistent root ID or an invalid registry or index rejects the whole
 input rather than serving a partially trusted catalogue.
 
-Visibility rule: only registry sites with `publication_status == "public"`
-are exposed, and only observations from a manifest whose `root_id` belongs to
-such a site. A manifest existing on disk never publishes anything by itself.
+Visibility rule: a site is published only when all three hold:
+
+1. its reviewed registry entry has `publication_status == "public"`;
+2. the manifest's site record (attached by the worker to every entry) has a
+   `confirmed` coordinate — the only source of public coordinates; registry
+   coordinates are never used;
+3. the manifest has at least one presentable observation for it.
+
+Otherwise the site and all its observations are omitted, indistinguishable
+from an unknown site. A manifest existing on disk never publishes anything
+by itself.
 
 Each observation keeps trusted internal media metadata (`MediaRecord`): relative
 paths, content type, size and checksum. Only the media routes and the
@@ -20,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -32,8 +41,10 @@ from coastsnap_import.models import (
     LEVEL0_DIR,
     LEVEL1_DIR,
     METADATA_SOURCE_RECORDS_DIR,
+    CoordinateStatus,
     Manifest,
     ManifestEntry,
+    SourceSite,
     build_site_directory_id,
 )
 from pydantic import ValidationError
@@ -199,6 +210,15 @@ class CatalogueObservation:
 
 
 @dataclass(frozen=True)
+class PublishedSite:
+    """A site that met every visibility rule: reviewed policy plus the manifest's confirmed coordinate."""
+
+    policy: RegistrySite
+    latitude: float
+    longitude: float
+
+
+@dataclass(frozen=True)
 class ObservationFilters:
     media_type: Optional[MediaType] = None
     date: Optional[date] = None
@@ -209,13 +229,14 @@ class ObservationFilters:
 class Catalogue:
     def __init__(
         self,
-        sites: list[RegistrySite],
+        sites: list[PublishedSite],
         observations: list[CatalogueObservation],
         *,
         media_enabled: bool = False,
         media_base_url: str = "",
     ):
-        self._sites = {site.site_id: site for site in sites if site.publication_status == "public"}
+        """`sites` should already be eligible (see build_catalogue); the public check is repeated defensively."""
+        self._sites = {site.policy.site_id: site for site in sites if site.policy.publication_status == "public"}
         by_site: dict[str, list[CatalogueObservation]] = {site_id: [] for site_id in self._sites}
         for observation in observations:
             if observation.site_id in by_site:
@@ -230,7 +251,7 @@ class Catalogue:
     # Sites
 
     def list_sites(self) -> list[CoastSnapSiteResponse]:
-        return [_site_response(site) for site in sorted(self._sites.values(), key=lambda s: s.name)]
+        return [_site_response(site) for site in sorted(self._sites.values(), key=lambda s: s.policy.name)]
 
     def get_site(self, site_id: str) -> Optional[CoastSnapSiteResponse]:
         site = self._sites.get(site_id)
@@ -286,7 +307,7 @@ class Catalogue:
     # Response mapping
 
     def _observation_response(self, observation: CatalogueObservation) -> CoastSnapObservationResponse:
-        site = self._sites[observation.site_id]
+        site = self._sites[observation.site_id].policy
         media = observation.media
         local_label = _long_date(observation.local_date)
         level0_available = self._media_enabled and media.level0.download_offered
@@ -344,13 +365,15 @@ def _matches(observation: CatalogueObservation, filters: ObservationFilters) -> 
     return True
 
 
-def _site_response(site: RegistrySite) -> CoastSnapSiteResponse:
+def _site_response(published: PublishedSite) -> CoastSnapSiteResponse:
+    site = published.policy
     return CoastSnapSiteResponse(
         id=site.site_id,
         name=site.name,
         state=site.state,
-        latitude=site.latitude,
-        longitude=site.longitude,
+        # The manifest's confirmed coordinate, never the deprecated registry fields.
+        latitude=published.latitude,
+        longitude=published.longitude,
         region=site.region,
         description=site.description,
         status=site.status,
@@ -399,6 +422,41 @@ def _utc(value: datetime, *, field: str) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise CatalogueError(f"{field} is not timezone-aware; the worker always writes UTC")
     return value.astimezone(timezone.utc)
+
+
+def effective_manifest_site(manifest: Manifest) -> Optional[SourceSite]:
+    """The one site record the worker attaches to every manifest entry.
+
+    None when the manifest has no entries, or when entries disagree — which a
+    worker run interrupted before its end-of-run site step can leave behind.
+    Rerunning the worker repairs that, so it withholds publication rather than
+    rejecting the catalogue. (Entries from another root are rejected earlier.)
+    """
+    if not manifest.entries:
+        return None
+    site = manifest.entries[0].site
+    if any(entry.site != site for entry in manifest.entries[1:]):
+        logger.warning("Manifest entries disagree on the site record; rerun the worker. Site not published.")
+        return None
+    return site
+
+
+def confirmed_coordinates(site: Optional[SourceSite]) -> Optional[tuple[float, float]]:
+    """(latitude, longitude) only for a `confirmed` site record. Null (pre-discovery manifests),
+    missing, invalid and inconsistent all return None. A record claiming `confirmed` without
+    valid coordinates contradicts itself and rejects the catalogue."""
+    if site is None or site.coordinate_status is not CoordinateStatus.CONFIRMED:
+        return None
+    latitude, longitude = site.latitude, site.longitude
+    if (
+        latitude is None
+        or longitude is None
+        or not (math.isfinite(latitude) and math.isfinite(longitude))
+        or not (-90 <= latitude <= 90 and -180 <= longitude <= 180)
+        or (latitude == 0 and longitude == 0)
+    ):
+        raise CatalogueError("manifest site record is marked confirmed but has missing or invalid coordinates")
+    return latitude, longitude
 
 
 def _servable_content_type(relative_path: str) -> Optional[str]:
@@ -455,8 +513,11 @@ def build_catalogue(
             derivative_by_obs[item.observation_id] = item
 
     site = next((s for s in registry.sites if s.spotteron_root_id == root_id), None)
+    coordinates = confirmed_coordinates(effective_manifest_site(manifest))
     observations: list[CatalogueObservation] = []
-    if site is not None and site.publication_status == "public":
+    if site is not None and site.publication_status == "public" and coordinates is None:
+        logger.warning("Public site %s not published: no confirmed coordinate in the manifest.", site.site_id)
+    if site is not None and site.publication_status == "public" and coordinates is not None:
         zone = ZoneInfo(site.display_time_zone)
         for entry in manifest.entries:
             obs = entry.observation
@@ -496,7 +557,13 @@ def build_catalogue(
                     ),
                 )
             )
-    return Catalogue(registry.sites, observations, media_enabled=media_enabled, media_base_url=media_base_url)
+        if not observations:
+            logger.warning("Public site %s not published: no presentable observation in the manifest.", site.site_id)
+
+    published: list[PublishedSite] = []
+    if site is not None and coordinates is not None and observations:
+        published.append(PublishedSite(policy=site, latitude=coordinates[0], longitude=coordinates[1]))
+    return Catalogue(published, observations, media_enabled=media_enabled, media_base_url=media_base_url)
 
 
 def load_catalogue(

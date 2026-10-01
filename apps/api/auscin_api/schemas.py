@@ -27,6 +27,10 @@ frontend types — see apps/api/README.md):
   guessed.
 - `spotteronSiteId`, `spotteronObservationId`, `spotteronMediaId`,
   `sourceUrl` and `checksumSha256` are omitted.
+- A site's `latitude`/`longitude` are the worker manifest's confirmed site
+  coordinate, derived from source observations. Registry coordinates are
+  never published. A site without a confirmed coordinate, or without a
+  presentable observation, is not returned at all.
 """
 
 from __future__ import annotations
@@ -62,8 +66,11 @@ class RegistrySite(BaseModel):
     state: StateOrTerritory
     region: str = Field(min_length=1)
     description: str = Field(min_length=1)
-    latitude: float = Field(ge=-90, le=90)
-    longitude: float = Field(ge=-180, le=180)
+    latitude: Optional[float] = Field(default=None, ge=-90, le=90)
+    """DEPRECATED and never used: published coordinates come only from the worker manifest's confirmed site
+    record. Still accepted (range-checked) so registries written before coordinate discovery keep loading."""
+    longitude: Optional[float] = Field(default=None, ge=-180, le=180)
+    """DEPRECATED and never used. See `latitude`."""
     display_time_zone: str
     status: OperatingStatus
     established_since: date

@@ -83,8 +83,11 @@ def test_observations_of_a_manifest_mapped_to_a_non_public_site_are_never_expose
     data["sites"][1]["spotteron_root_id"] = "TEST_ROOT_ID"
     hidden_client = TestClient(create_app(fixture_settings(registry=write_json("registry.json", data))))
 
-    assert hidden_client.get("/api/v1/health").json()["publicObservationCount"] == 0
-    assert hidden_client.get(f"{BASE}/sites/{PUBLIC_SITE_ID}/observations").json()["total"] == 0
+    assert hidden_client.get("/api/v1/health").json() == {
+        "status": "ok", "publicSiteCount": 0, "publicObservationCount": 0,
+    }
+    # The public registry site has no manifest, so no images: it is omitted too.
+    assert hidden_client.get(f"{BASE}/sites/{PUBLIC_SITE_ID}/observations").status_code == 404
     assert hidden_client.get(f"{BASE}/sites/{HIDDEN_SITE_ID}/observations").status_code == 404
 
 
@@ -281,13 +284,15 @@ def test_date_range_returns_earliest_and_latest(client):
     assert body["latest"]["id"] == media_id("TEST_OBS_0005")
 
 
-def test_date_range_of_public_site_without_observations_is_null(registry_data, write_json):
+def test_public_site_without_observations_is_omitted_like_an_unknown_site(registry_data, write_json):
     data = copy.deepcopy(registry_data)
     data["sites"][0]["spotteron_root_id"] = "TEST_ROOT_ID_EMPTY"
     empty_client = TestClient(create_app(fixture_settings(registry=write_json("registry.json", data))))
-    response = empty_client.get(f"{BASE}/sites/{PUBLIC_SITE_ID}/date-range")
-    assert response.status_code == 200
-    assert response.json() == {"earliest": None, "latest": None}
+    assert empty_client.get(f"{BASE}/sites").json() == []
+    for path in (f"{BASE}/sites/{PUBLIC_SITE_ID}", f"{BASE}/sites/{PUBLIC_SITE_ID}/date-range"):
+        response = empty_client.get(path)
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "site_not_found"
 
 
 # --- No filesystem paths or internal identifiers in any response ------------------------

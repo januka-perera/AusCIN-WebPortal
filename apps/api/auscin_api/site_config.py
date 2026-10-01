@@ -19,9 +19,13 @@ Rules:
   - the root ID must be a plain identifier
   - the name, region, description and attribution must be real text
   - the state must be an Australian state or territory
-  - latitude and longitude must be in range
   - the time zone must be a valid IANA name
   - the establishment date must not be in the future
+- **No coordinates:** site latitude and longitude are not entered here. The
+  worker derives them from the source observations, and the API publishes a
+  site only once its manifest has a confirmed coordinate. Legacy
+  `COASTSNAP_SITE_LATITUDE`/`LONGITUDE` values are range-checked if present,
+  noted as ignored, and never written to the registry.
 - **Explicit decisions:** publication status and the download permission for
   each product level must be set explicitly:
   - `COASTSNAP_SITE_LEVEL0_DOWNLOAD_PERMITTED`: the untouched source image
@@ -71,8 +75,6 @@ SITE_FIELDS = (
     "COASTSNAP_SITE_STATE",
     "COASTSNAP_SITE_REGION",
     "COASTSNAP_SITE_DESCRIPTION",
-    "COASTSNAP_SITE_LATITUDE",
-    "COASTSNAP_SITE_LONGITUDE",
     "COASTSNAP_SITE_TIME_ZONE",
     "COASTSNAP_SITE_ESTABLISHED_SINCE",
     "COASTSNAP_SITE_ATTRIBUTION_TEXT",
@@ -86,6 +88,9 @@ RETIRED_FIELDS = {
         "remove it and set both levels explicitly"
     ),
 }
+IGNORED_COORDINATE_FIELDS = ("COASTSNAP_SITE_LATITUDE", "COASTSNAP_SITE_LONGITUDE")
+"""No longer entered by hand: the worker derives site coordinates from source observations. Still
+range-checked when an older env file sets them, but never written to the registry or published."""
 PATH_FIELDS = (
     "COASTSNAP_STAGING_DIR",
     "COASTSNAP_DERIVATIVES_ROOT",
@@ -197,7 +202,7 @@ def validate_site_config(
             report.fail(name, message)
 
     values: dict[str, str] = {}
-    for name in ALL_FIELDS:
+    for name in ALL_FIELDS + IGNORED_COORDINATE_FIELDS:
         raw = env.get(name)
         value = raw.strip() if isinstance(raw, str) else ""
         if not value:
@@ -266,6 +271,11 @@ def _parse_float(values: dict[str, str], name: str, report: ValidationReport) ->
 
 
 def _validate_location(values: dict[str, str], report: ValidationReport) -> None:
+    if any(name in values for name in IGNORED_COORDINATE_FIELDS):
+        report.notes.append(
+            "COASTSNAP_SITE_LATITUDE/LONGITUDE are ignored: the worker derives site coordinates from source "
+            "observations, and a site without a confirmed coordinate is not published. Remove them."
+        )
     latitude = _parse_float(values, "COASTSNAP_SITE_LATITUDE", report)
     longitude = _parse_float(values, "COASTSNAP_SITE_LONGITUDE", report)
     if latitude is not None and not -90 <= latitude <= 90:
@@ -376,8 +386,7 @@ def build_registry(values: Mapping[str, str]) -> SiteRegistry:
                     "state": values["COASTSNAP_SITE_STATE"].strip(),
                     "region": values["COASTSNAP_SITE_REGION"].strip(),
                     "description": values["COASTSNAP_SITE_DESCRIPTION"].strip(),
-                    "latitude": float(values["COASTSNAP_SITE_LATITUDE"]),
-                    "longitude": float(values["COASTSNAP_SITE_LONGITUDE"]),
+                    # No latitude/longitude: coordinates come from the worker manifest, never the registry.
                     "display_time_zone": values["COASTSNAP_SITE_TIME_ZONE"].strip(),
                     "status": "active",
                     "established_since": values["COASTSNAP_SITE_ESTABLISHED_SINCE"].strip(),
@@ -414,7 +423,7 @@ def _print_report(report: ValidationReport, out) -> None:
                 print(f"[FAIL] {name} {message}", file=out)
         else:
             print(f"[ OK ] {name}", file=out)
-    for name in RETIRED_FIELDS:
+    for name in (*RETIRED_FIELDS, *IGNORED_COORDINATE_FIELDS):
         for message in report.errors.get(name, []):
             print(f"[FAIL] {name} {message}", file=out)
     for note in report.notes:
@@ -468,7 +477,9 @@ def main(argv: Optional[list[str]] = None, environ: Optional[Mapping[str, str]] 
         print(f"[FAIL] registry rejected by the API model: {exc}", file=out)
         return 1
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(registry.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    # The deprecated coordinate fields are left out entirely: coordinates come from the worker manifest.
+    deprecated = {"sites": {"__all__": {"latitude", "longitude"}}}
+    output.write_text(registry.model_dump_json(indent=2, exclude=deprecated) + "\n", encoding="utf-8")
     site = registry.sites[0]
     print(
         f"\nWrote {output.name} for {site.site_id}. Review it before starting the API:\n"
