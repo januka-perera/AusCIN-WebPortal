@@ -1,4 +1,4 @@
-import type { OperatingStatus, StateOrTerritory, Station } from "@/data";
+import type { OperatingStatus, StateOrTerritory } from "@/data";
 import { firstParam, type SearchParams } from "@/lib/media-filters";
 
 export { firstParam };
@@ -6,14 +6,21 @@ export type { SearchParams };
 
 const OPERATING_STATUSES: OperatingStatus[] = ["active", "offline", "maintenance"];
 
+/** The fields the map filters read. Both fixed stations and CoastSnap map locations have them. */
+export type MapFilterable = {
+  state: StateOrTerritory;
+  region: string;
+  operationalStatus: OperatingStatus;
+};
+
 export type MapFilters = {
   state?: StateOrTerritory;
   region?: string;
   status?: OperatingStatus;
 };
 
-/** Parses and validates state/region/status query params against the actual station data. Invalid values are dropped, not rejected. */
-export function parseMapFilters(search: SearchParams, stations: Station[]): MapFilters {
+/** Parses and validates state/region/status query params against the actual locations. Invalid values are dropped, not rejected. */
+export function parseMapFilters(search: SearchParams, stations: MapFilterable[]): MapFilters {
   const availableStates = new Set(stations.map((station) => station.state));
   const stateParam = firstParam(search.state) as StateOrTerritory | undefined;
   const state = stateParam && availableStates.has(stateParam) ? stateParam : undefined;
@@ -29,7 +36,7 @@ export function parseMapFilters(search: SearchParams, stations: Station[]): MapF
 }
 
 /** Applies each filter additively (AND); a contradictory combination safely yields zero results. */
-export function applyMapFilters(stations: Station[], filters: MapFilters): Station[] {
+export function applyMapFilters<T extends MapFilterable>(stations: T[], filters: MapFilters): T[] {
   return stations.filter((station) => {
     if (filters.state && station.state !== filters.state) return false;
     if (filters.region && station.region !== filters.region) return false;

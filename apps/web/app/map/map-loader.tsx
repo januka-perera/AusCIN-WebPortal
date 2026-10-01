@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import type { TileConfig } from "./tile-config";
-import type { MapStationSummary } from "./types";
+import type { MapLocation } from "./types";
 
 // Leaflet reads `window` at module load time, so the map must never be
 // part of the server-rendered bundle. next/dynamic with ssr:false can
@@ -21,10 +21,10 @@ const StationMap = dynamic(() => import("./station-map"), {
 });
 
 type MapLoaderProps = {
-  stations: MapStationSummary[];
+  locations: MapLocation[];
   tileConfig: Extract<TileConfig, { available: true }>;
 };
 
-export function MapLoader({ stations, tileConfig }: MapLoaderProps) {
-  return <StationMap stations={stations} tileConfig={tileConfig} />;
+export function MapLoader({ locations, tileConfig }: MapLoaderProps) {
+  return <StationMap locations={locations} tileConfig={tileConfig} />;
 }

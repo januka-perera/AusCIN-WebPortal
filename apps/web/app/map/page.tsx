@@ -3,12 +3,13 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatusLabel } from "@/components/ui/status-label";
-import { repository, type Station } from "@/data";
-import { getOperatingStatusTone } from "@/lib/status-tone";
+import { coastSnapRepository, getCoastSnapDataSource, repository } from "@/data";
 import { applyMapFilters, countActiveFilters, hasActiveFilters, parseMapFilters, type SearchParams } from "./filters";
+import { describeLocationCounts, MAP_LOCATION_KIND_LABELS } from "./labels";
+import { loadMapLocations } from "./locations";
 import { MapLoader } from "./map-loader";
 import { resolveTileConfig } from "./tile-config";
-import type { MapStationSummary } from "./types";
+import type { MapLocation } from "./types";
 
 export const metadata: Metadata = {
   title: "Map",
@@ -22,13 +23,16 @@ const OPERATING_STATUSES = ["active", "offline", "maintenance"] as const;
 
 export default async function MapPage({ searchParams }: PageProps<"/map">) {
   const search: SearchParams = await searchParams;
-  const stations = await repository.listStations();
+  const coastSnapSource = getCoastSnapDataSource();
+  const { locations, coastSnapUnavailable } = await loadMapLocations(repository, coastSnapRepository);
+  const stationCount = locations.filter((location) => location.kind === "station").length;
+  const coastSnapCount = locations.length - stationCount;
 
-  const availableStates = [...new Set(stations.map((station) => station.state))].sort();
-  const availableRegions = [...new Set(stations.map((station) => station.region))].sort();
+  const availableStates = [...new Set(locations.map((location) => location.state))].sort();
+  const availableRegions = [...new Set(locations.map((location) => location.region))].sort();
 
-  const filters = parseMapFilters(search, stations);
-  const filtered = applyMapFilters(stations, filters);
+  const filters = parseMapFilters(search, locations);
+  const filtered = applyMapFilters(locations, filters);
   const activeFilters = hasActiveFilters(filters);
   const activeFilterCount = countActiveFilters(filters);
 
@@ -43,38 +47,33 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
     process.env.NEXT_PUBLIC_MAP_TILE_ATTRIBUTION,
   );
 
-  const mapStations: MapStationSummary[] = await Promise.all(
-    filtered.map(async (station) => ({
-      id: station.id,
-      name: station.name,
-      state: station.state,
-      region: station.region,
-      latitude: station.latitude,
-      longitude: station.longitude,
-      operationalStatus: station.operationalStatus,
-      tone: getOperatingStatusTone(station.operationalStatus),
-      cameraCount: (await repository.listCamerasForStation(station.id)).length,
-      mediaCount: (await repository.listStationObservations(station.id, {})).length,
-    })),
-  );
-
   return (
     <div className="mx-auto max-w-6xl px-6 py-16">
       <p className="text-meta uppercase tracking-label text-accent">Observation network</p>
       <h1 className="mt-2 font-display text-display-md text-foreground">
-        Coastal observation stations across Australia
+        Coastal observation locations across Australia
       </h1>
       <p className="mt-2 text-meta text-muted">
-        Sample development record &mdash; not an operational AusCIN feed. These {stations.length}{" "}
-        stations are fictional records used to build and test this map.
+        Sample development record &mdash; not an operational AusCIN feed. The {stationCount} fixed
+        station{stationCount === 1 ? "" : "s"} are fictional records used to build and test this map.{" "}
+        {coastSnapSource === "sample"
+          ? "The CoastSnap sites are synthetic sample fixtures too."
+          : "CoastSnap sites come from the CoastSnap catalogue; each site's own page says if it is a test record."}
       </p>
 
       <p className="mt-6 max-w-2xl text-body text-muted">
         AusCIN&apos;s network combines fixed reference cameras, lidar scanners, existing camera
-        infrastructure and CoastSnap observations. The sample stations plotted below use fixed
-        cameras and, at Cape Mirrigan, a lidar reference scanner &mdash; positioned here by their
-        recorded latitude and longitude.
+        infrastructure and CoastSnap observations. The fixed stations plotted below use installed
+        cameras and, at Cape Mirrigan, a lidar reference scanner. CoastSnap sites are community
+        photo points, plotted only once they have at least one published photo; in the catalogue,
+        their location must also be confirmed from the source records.
       </p>
+      {coastSnapUnavailable && (
+        <p role="status" className="mt-4 max-w-2xl border-l-2 border-secondary-accent pl-4 text-small text-foreground">
+          CoastSnap sites couldn&apos;t be loaded from the catalogue just now, so only fixed stations
+          are shown. Please try again shortly.
+        </p>
+      )}
 
       <details className="mt-10 border-t border-b border-border" open={activeFilters}>
         <summary className="cursor-pointer select-none py-4 text-small font-medium text-foreground">
@@ -131,14 +130,21 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
       </details>
 
       <p className="mt-6 border-b border-border pb-6 text-small text-foreground">
-        <span className="font-medium">{filtered.length}</span> of {stations.length} station
-        {stations.length === 1 ? "" : "s"} &middot; {summaryParts.join(" · ")}
+        <span className="font-medium">{filtered.length}</span> of {locations.length} location
+        {locations.length === 1 ? "" : "s"} ({stationCount} fixed station{stationCount === 1 ? "" : "s"},{" "}
+        {coastSnapCount} CoastSnap site{coastSnapCount === 1 ? "" : "s"}) &middot; {summaryParts.join(" · ")}
       </p>
 
-      {filtered.length === 0 ? (
+      {locations.length === 0 ? (
         <EmptyState
           className="mt-10"
-          title="No stations match these filters"
+          title="No locations to show yet"
+          description="No fixed stations or published CoastSnap sites are available to plot."
+        />
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          className="mt-10"
+          title="No locations match these filters"
           description="Try a different state, region or operational status, or clear the filters to see the whole network."
           action={activeFilters ? { label: "Clear filters", href: "/map" } : undefined}
         />
@@ -147,14 +153,14 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
           <div className="mt-10">
             {tileConfig.available ? (
               <MapLoader
-                key={mapStations.map((station) => station.id).join(",")}
-                stations={mapStations}
+                key={filtered.map((location) => location.anchorId).join(",")}
+                locations={filtered}
                 tileConfig={tileConfig}
               />
             ) : (
               <EmptyState
                 title="Map unavailable"
-                description="No basemap tile source is configured for this preview. All matching stations are listed below."
+                description="No basemap tile source is configured for this preview. All matching locations are listed below."
               />
             )}
             {tileConfig.available && tileConfig.isDevDefault && (
@@ -180,10 +186,10 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
           </div>
 
           <section className="mt-16 border-t border-border pt-10">
-            <h2 className="font-display text-heading-lg text-foreground">Station records</h2>
+            <h2 className="font-display text-heading-lg text-foreground">Location records</h2>
             <ul className="mt-6 divide-y divide-border">
-              {filtered.map((station) => (
-                <StationRow key={station.id} station={station} />
+              {filtered.map((location) => (
+                <LocationRow key={location.anchorId} location={location} />
               ))}
             </ul>
           </section>
@@ -193,43 +199,32 @@ export default async function MapPage({ searchParams }: PageProps<"/map">) {
   );
 }
 
-async function StationRow({ station }: { station: Station }) {
-  const cameraCount = (await repository.listCamerasForStation(station.id)).length;
-  const mediaCount = (await repository.listStationObservations(station.id, {})).length;
-
+function LocationRow({ location }: { location: MapLocation }) {
   return (
     <li
-      id={`station-${station.id}`}
+      id={location.anchorId}
       className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2 py-4 [&:target]:bg-accent/5"
     >
       <div className="min-w-0">
-        <Link
-          href={`/stations/${station.id}`}
-          className="text-small font-medium text-foreground hover:text-accent"
-        >
-          {station.name}
+        <Link href={location.href} className="text-small font-medium text-foreground hover:text-accent">
+          {location.name}
         </Link>
         <p className="mt-1 text-meta uppercase tracking-label text-muted">
-          {station.state} &middot; {station.region} &middot; Station ID {station.id}
+          {MAP_LOCATION_KIND_LABELS[location.kind]} &middot; {location.state} &middot; {location.region} &middot;{" "}
+          {location.kind === "coastsnap" ? "Site" : "Station"} ID {location.id}
         </p>
         <div className="mt-1">
-          <StatusLabel label={station.operationalStatus} tone={getOperatingStatusTone(station.operationalStatus)} />
+          <StatusLabel label={location.operationalStatus} tone={location.tone} />
         </div>
       </div>
       <div className="flex flex-col items-end gap-1 text-right">
-        <p className="text-meta uppercase tracking-label text-muted">
-          {cameraCount} camera{cameraCount === 1 ? "" : "s"} &middot; {mediaCount} observation
-          {mediaCount === 1 ? "" : "s"}
-        </p>
+        <p className="text-meta uppercase tracking-label text-muted">{describeLocationCounts(location)}</p>
         <div className="flex flex-wrap justify-end gap-x-4 gap-y-1">
-          <Link
-            href={`/stations/${station.id}`}
-            className="text-small font-medium text-accent hover:text-accent-strong"
-          >
-            Station record &rarr;
+          <Link href={location.href} className="text-small font-medium text-accent hover:text-accent-strong">
+            {location.kind === "coastsnap" ? "Site record" : "Station record"} &rarr;
           </Link>
           <Link
-            href={`/stations/${station.id}/archive`}
+            href={location.archiveHref}
             className="text-small font-medium text-accent hover:text-accent-strong"
           >
             Archive &rarr;
