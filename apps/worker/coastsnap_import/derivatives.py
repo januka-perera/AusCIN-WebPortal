@@ -79,8 +79,12 @@ PRODUCTION_STORAGE_PREFIX = "/g/data"
 
 DerivativeKind = Literal["thumbnail", "preview"]
 
-SUPPORTED_SOURCE_FORMATS = frozenset({"JPEG", "PNG", "WEBP"})
-"""Pillow format names accepted as Level 1 sources. Anything else fails explicitly, including formats Pillow can't open at all, such as HEIC."""
+SUPPORTED_SOURCE_FORMATS = frozenset({"JPEG", "MPO", "PNG", "WEBP"})
+"""Pillow format names accepted as Level 1 sources. Anything else fails explicitly, including formats Pillow can't open at all, such as HEIC.
+
+MPO (Multi-Picture Object) is what Pillow reports for a JPEG that carries extra
+images after the primary one, as many phone cameras write. The outer file is an
+ordinary JPEG. Only frame 0, the primary image, is ever used (see _open_source)."""
 
 MAX_SOURCE_PIXELS = 100_000_000
 """Refuse to decode absurdly large images (roughly 5x a 20 MP phone photo) instead of risking memory exhaustion."""
@@ -217,12 +221,18 @@ def _import_pillow():
 
 
 def _open_source(path: Path):
-    """Decodes a verified Level 1 file into an upright RGB image."""
+    """Decodes a verified Level 1 file (frame 0 of a multi-frame file) into an upright RGB image.
+
+    The file is only read. The returned image is a detached copy that carries no
+    source metadata into the derivatives (render_jpeg saves without any)."""
     Image, ImageOps, UnidentifiedImageError = _import_pillow()
     try:
         with Image.open(path) as opened:
             if opened.format not in SUPPORTED_SOURCE_FORMATS:
                 raise DerivativeError(f"unsupported source image format {opened.format!r}")
+            # Always the first frame: for an MPO, the primary image (the one any JPEG reader
+            # shows), never its secondary images. A no-op for single-frame sources.
+            opened.seek(0)
             if opened.width * opened.height > MAX_SOURCE_PIXELS:
                 raise DerivativeError("source image is too large to process")
             opened.load()

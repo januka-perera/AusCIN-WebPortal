@@ -60,6 +60,23 @@ def jpeg_bytes(width: int, height: int, color=(90, 130, 150), exif: Optional[byt
     return buffer.getvalue()
 
 
+def mpo_bytes(
+    primary: tuple[int, int] = (800, 600), secondary: tuple[int, int] = (1200, 900), *,
+    exif: Optional[bytes] = None, xmp: Optional[bytes] = None,
+) -> bytes:
+    """A synthetic two-frame MPO, as phone cameras write: a red primary image followed by a
+    larger blue secondary one, so a test can tell which frame was used."""
+    buffer = io.BytesIO()
+    kwargs = {key: value for key, value in (("exif", exif), ("xmp", xmp)) if value}
+    Image.new("RGB", primary, (220, 30, 30)).save(
+        buffer, format="MPO", save_all=True, append_images=[Image.new("RGB", secondary, (30, 30, 220))], **kwargs,
+    )
+    data = buffer.getvalue()
+    with Image.open(io.BytesIO(data)) as check:  # guard: this really is the multi-frame format under test
+        assert (check.format, check.n_frames) == ("MPO", 2)
+    return data
+
+
 def png_rgba_bytes(width: int, height: int) -> bytes:
     buffer = io.BytesIO()
     Image.new("RGBA", (width, height), (10, 20, 30, 0)).save(buffer, format="PNG")
@@ -235,6 +252,107 @@ def test_png_with_transparency_is_flattened_to_jpeg(ws):
     assert entry.thumbnail.relative_path.endswith("/OBS_PNG.jpg")
     with Image.open(ws.output_file(entry.thumbnail.relative_path)) as image:
         assert (image.format, image.mode, image.size) == ("JPEG", "RGB", (400, 200))
+
+
+def test_webp_source_is_converted_to_jpeg(ws):
+    buffer = io.BytesIO()
+    Image.new("RGB", (900, 600), (40, 120, 90)).save(buffer, format="WEBP")
+    ws.add("OBS_WEBP", buffer.getvalue(), suffix=".webp")
+    summary, _, _ = ws.run()
+    assert summary.failed == 0
+    entry = entry_for(ws.load_index(), "OBS_WEBP")
+    with Image.open(ws.output_file(entry.thumbnail.relative_path)) as image:
+        assert (image.format, image.mode, image.size) == ("JPEG", "RGB", (400, 267))
+
+
+# --- MPO (multi-picture JPEG, as written by many phones) ---------------------------------------
+
+
+def _centre_pixel(path: Path) -> tuple[int, int, int]:
+    with Image.open(path) as image:
+        return image.getpixel((image.width // 2, image.height // 2))
+
+
+def test_mpo_uses_the_primary_frame_for_both_renditions(ws):
+    ws.add("OBS_MPO", mpo_bytes(primary=(800, 600), secondary=(1200, 900)))
+    summary, _, err = ws.run()
+    assert (summary.processed, summary.failed) == (1, 0), err
+    entry = entry_for(ws.load_index(), "OBS_MPO")
+    # Frame 0's size and colour (red), never the larger blue secondary frame.
+    assert (entry.source_width, entry.source_height) == (800, 600)
+    assert (entry.thumbnail.width, entry.thumbnail.height) == (400, 300)
+    assert (entry.preview.width, entry.preview.height) == (800, 600)
+    for rendition in (entry.thumbnail, entry.preview):
+        red, green, blue = _centre_pixel(ws.output_file(rendition.relative_path))
+        assert red > 180 and blue < 80
+
+
+def test_mpo_outputs_are_single_frame_metadata_free_rgb_jpegs(ws):
+    exif = Image.Exif()
+    exif[0x010E] = "SyntheticPrivateMarker"  # ImageDescription
+    exif.get_ifd(0x8825)[2] = (33.0, 51.0, 0.0)  # GPSLatitude
+    ws.add("OBS_MPO", mpo_bytes(exif=exif.tobytes(), xmp=b"<x:xmpmeta>SyntheticXmpMarker</x:xmpmeta>"))
+    ws.run()
+    entry = entry_for(ws.load_index(), "OBS_MPO")
+    for rendition in (entry.thumbnail, entry.preview):
+        assert rendition.content_type == "image/jpeg"
+        path = ws.output_file(rendition.relative_path)
+        with Image.open(path) as image:
+            assert (image.format, image.mode, getattr(image, "n_frames", 1)) == ("JPEG", "RGB", 1)
+            assert len(image.getexif()) == 0
+            assert "xmp" not in image.info
+        data = path.read_bytes()
+        assert b"SyntheticPrivateMarker" not in data and b"SyntheticXmpMarker" not in data
+        assert b"MPF\x00" not in data  # no multi-picture index either
+
+
+def test_mpo_exif_orientation_is_applied(ws):
+    exif = Image.Exif()
+    exif[0x0112] = 6  # Orientation: rotate 90 CW when displaying
+    ws.add("OBS_MPO_ROTATED", mpo_bytes(primary=(800, 600), exif=exif.tobytes()))
+    ws.run()
+    entry = entry_for(ws.load_index(), "OBS_MPO_ROTATED")
+    assert (entry.source_width, entry.source_height) == (600, 800)
+    assert (entry.thumbnail.width, entry.thumbnail.height) == (300, 400)
+
+
+def test_mpo_source_is_unchanged_and_its_checksum_is_recorded(ws):
+    data = mpo_bytes()
+    relative = ws.add("OBS_MPO", data)
+    source = ws.staging.joinpath(*relative.split("/"))
+    ws.run()
+    assert source.read_bytes() == data
+    entry = entry_for(ws.load_index(), "OBS_MPO")
+    assert entry.source_sha256 == hashlib.sha256(data).hexdigest() == ws.entries[0].level1.checksum.sha256
+    assert entry.thumbnail.relative_path.endswith("/OBS_MPO.jpg")
+
+
+def test_mpo_frame_selection_is_deterministic(ws):
+    ws.add("OBS_MPO", mpo_bytes())
+    ws.run()
+    before = entry_for(ws.load_index(), "OBS_MPO")
+    ws.index.unlink()  # no reuse hints: force regeneration
+    ws.run()
+    assert entry_for(ws.load_index(), "OBS_MPO") == before
+
+
+def test_mpo_rerun_reuses_and_a_changed_level1_regenerates(ws):
+    ws.add("OBS_MPO", mpo_bytes())
+    first, _, _ = ws.run()
+    assert (first.processed, first.reused) == (1, 0)
+    old = entry_for(ws.load_index(), "OBS_MPO")
+
+    second, out, _ = ws.run()
+    assert (second.processed, second.reused) == (0, 1)
+    assert "[reused] OBS_MPO" in out
+
+    ws.entries.clear()
+    ws.add("OBS_MPO", mpo_bytes(primary=(1000, 1000)))  # reprocessed Level 1, new checksum
+    third, _, _ = ws.run()
+    assert (third.processed, third.reused) == (1, 0)
+    new = entry_for(ws.load_index(), "OBS_MPO")
+    assert new.source_sha256 != old.source_sha256
+    assert (new.thumbnail.width, new.thumbnail.height) == (400, 400)
 
 
 # --- Source verification failures ----------------------------------------------------------
