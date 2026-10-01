@@ -582,6 +582,15 @@ python -m auscin_api.site_config write-registry `
 Configure the API with the matching manifests and indexes (see "One site or
 several").
 
+**Refreshing the catalogue.** The API builds its catalogue only at startup,
+so new worker output, new derivatives or a new registry take effect on
+restart. The manual refresh order, a trial start on a spare loopback port
+before switching the service, the post-restart checks and rollback are in
+[`docs/implementation/coastsnap-catalogue-refresh.md`](../../docs/implementation/coastsnap-catalogue-refresh.md).
+That trial start is the complete pre-restart validator: it uses the same
+loader as the service, fails on any unsafe or corrupt input, and logs a
+warning naming each public site that will stay hidden.
+
 In outline, once the project owner supplies the real values:
 
 1. **Worker.** Run `--process-local` for `<SPOTTERON_ROOT_ID>` into a staging

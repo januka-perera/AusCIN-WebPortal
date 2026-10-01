@@ -349,6 +349,11 @@ they record. `/api/v1/health` should report one public site for every site
 that is public, has a confirmed coordinate and has at least one presentable
 image. See `apps/api/README.md` → "One site or several".
 
+Once sites are configured, refresh them (new observations, a new site, or a
+reviewed policy change) with
+[`coastsnap-catalogue-refresh.md`](coastsnap-catalogue-refresh.md). It covers
+the fixed order, the trial start before any restart, and rollback.
+
 ## Clean up
 
 Remove local staging only after review, and after the transfer has been
