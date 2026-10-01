@@ -140,6 +140,7 @@ def make_level1_from_level0(level0: bytes, observation_id: str) -> bytes:
 
 def build_staging(staging: Path) -> tuple[Path, dict[str, dict]]:
     """Writes synthetic Level 0 and Level 1 files and a worker-format manifest. Returns (manifest path, expected-by-observation)."""
+    from coastsnap_import.image_resolver import COORDINATE_SOURCE_OBSERVATION_MEAN, derive_site_coordinates
     from coastsnap_import.models import (
         ChecksumInfo, Level0Product, Level1Product, Manifest, ManifestEntry, ProcessingDetails, ProductLevel,
         SourceObservation, SourceSite, build_level_relative_path, build_site_directory_id, build_source_record_paths,
@@ -164,6 +165,9 @@ def build_staging(staging: Path) -> tuple[Path, dict[str, dict]]:
             observation=SourceObservation(
                 observation_id=obs_id, root_id=ROOT_ID,
                 spotted_at_raw=captured.strftime("%Y-%m-%d %H:%M:%S"), spotted_at_utc=captured,
+                # Synthetic source coordinates (the fixture site's), so the site record is confirmed
+                # exactly as the worker would derive it.
+                latitude=-33.0, longitude=151.0, image_url=f"https://example.invalid/e2e/{obs_id}.jpg",
             ),
             source_record_ref=build_source_record_paths(ROOT_ID, obs_id),
             level0=Level0Product(
@@ -184,6 +188,15 @@ def build_staging(staging: Path) -> tuple[Path, dict[str, dict]]:
             ingested_at_utc=now,
         ))
         expected[obs_id] = {"level0": level0_sha, "level1": level1_sha, "width": width, "height": height}
+
+    # The same one site record the worker attaches to every entry at the end of a run.
+    result = derive_site_coordinates(entry.observation for entry in entries)
+    site = SourceSite(
+        root_id=ROOT_ID, latitude=result.latitude, longitude=result.longitude,
+        coordinate_source=COORDINATE_SOURCE_OBSERVATION_MEAN, coordinate_status=result.status,
+        coordinate_error=result.error, coordinate_observation_count=result.observation_count,
+    )
+    entries = [entry.model_copy(update={"site": site}) for entry in entries]
 
     manifest = Manifest(
         run_id=now.strftime("%Y%m%dT%H%M%SZ"), root_id=ROOT_ID, topic_id=37,
