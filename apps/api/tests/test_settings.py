@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -11,7 +12,7 @@ def test_from_env_reads_required_paths():
     )
     assert settings.environment == "development"
     assert settings.site_registry_path == Path("registry.json")
-    assert settings.manifest_path == Path("manifest.json")
+    assert settings.manifest_paths == (Path("manifest.json"),)
 
 
 @pytest.mark.parametrize("missing", ["COASTSNAP_SITE_REGISTRY_PATH", "COASTSNAP_MANIFEST_PATH"])
@@ -51,7 +52,7 @@ def test_optional_media_settings_are_read():
             "AUSCIN_MEDIA_BASE_URL": "http://localhost:8000/",
         }
     )
-    assert settings.derivatives_index_path == Path("d.json")
+    assert settings.derivatives_index_paths == (Path("d.json"),)
     assert settings.media_root == Path("media")
     assert settings.media_base_url == "http://localhost:8000"
 
@@ -59,7 +60,7 @@ def test_optional_media_settings_are_read():
 def test_media_settings_default_to_disabled():
     settings = Settings.from_env({"COASTSNAP_SITE_REGISTRY_PATH": "r.json", "COASTSNAP_MANIFEST_PATH": "m.json"})
     assert settings.media_root is None
-    assert settings.derivatives_index_path is None
+    assert settings.derivatives_index_paths == ()
     assert settings.media_base_url == ""
 
 
@@ -97,3 +98,68 @@ def test_derivatives_root_is_read_and_requires_media_root():
         Settings.from_env({**base, "COASTSNAP_DERIVATIVES_ROOT": "derivatives"})
     with pytest.raises(SettingsError, match="/g/data"):
         Settings.from_env({**base, "COASTSNAP_MEDIA_ROOT": "staging", "COASTSNAP_DERIVATIVES_ROOT": "/g/data/qu34/d"})
+
+
+# --- Explicit multi-manifest configuration -------------------------------------------------------
+
+SEP = os.pathsep  # ";" on Windows, ":" on POSIX
+
+
+def multi_env(**overrides: str) -> dict[str, str]:
+    return {"COASTSNAP_SITE_REGISTRY_PATH": "r.json", **overrides}
+
+
+def test_manifest_paths_list_is_read_in_order():
+    settings = Settings.from_env(multi_env(
+        COASTSNAP_MANIFEST_PATHS=f"a/m1.json{SEP} b/m2.json {SEP}m3.json",
+        COASTSNAP_DERIVATIVES_INDEX_PATHS=f"d2.json{SEP}d1.json",
+    ))
+    assert settings.manifest_paths == (Path("a/m1.json"), Path("b/m2.json"), Path("m3.json"))
+    assert settings.derivatives_index_paths == (Path("d2.json"), Path("d1.json"))
+
+
+def test_a_one_entry_list_is_equivalent_to_the_singular_setting():
+    plural = Settings.from_env(multi_env(COASTSNAP_MANIFEST_PATHS="m.json", COASTSNAP_DERIVATIVES_INDEX_PATHS="d.json"))
+    single = Settings.from_env(multi_env(COASTSNAP_MANIFEST_PATH="m.json", COASTSNAP_DERIVATIVES_INDEX_PATH="d.json"))
+    assert plural == single
+
+
+def test_missing_manifest_configuration_names_both_settings():
+    with pytest.raises(SettingsError, match="COASTSNAP_MANIFEST_PATH or COASTSNAP_MANIFEST_PATHS is required"):
+        Settings.from_env(multi_env(COASTSNAP_MANIFEST_PATHS="   "))
+
+
+@pytest.mark.parametrize(
+    ("single", "plural"),
+    [("COASTSNAP_MANIFEST_PATH", "COASTSNAP_MANIFEST_PATHS"),
+     ("COASTSNAP_DERIVATIVES_INDEX_PATH", "COASTSNAP_DERIVATIVES_INDEX_PATHS")],
+)
+def test_singular_and_plural_together_are_refused(single, plural):
+    env = {**multi_env(COASTSNAP_MANIFEST_PATH="m.json"), single: "x.json", plural: "y.json"}
+    with pytest.raises(SettingsError, match=f"either {single} or {plural}"):
+        Settings.from_env(env)
+
+
+@pytest.mark.parametrize("value", [SEP, f"m1.json{SEP}", f"{SEP}m1.json", f"m1.json{SEP}{SEP}m2.json", f"m1.json{SEP} "])
+def test_empty_list_entries_are_refused(value):
+    with pytest.raises(SettingsError, match="empty entry"):
+        Settings.from_env(multi_env(COASTSNAP_MANIFEST_PATHS=value))
+
+
+@pytest.mark.parametrize("value", [f"m.json{SEP}m.json", f"m.json{SEP}./m.json", f"dir/m.json{SEP}dir/../dir/m.json"])
+def test_duplicate_manifest_paths_are_refused(value):
+    with pytest.raises(SettingsError, match="COASTSNAP_MANIFEST_PATHS lists the same file more than once"):
+        Settings.from_env(multi_env(COASTSNAP_MANIFEST_PATHS=value))
+
+
+def test_duplicate_derivatives_index_paths_are_refused():
+    with pytest.raises(SettingsError, match="COASTSNAP_DERIVATIVES_INDEX_PATHS lists the same file more than once"):
+        Settings.from_env(multi_env(COASTSNAP_MANIFEST_PATHS=f"a.json{SEP}b.json",
+                                    COASTSNAP_DERIVATIVES_INDEX_PATHS=f"d.json{SEP}d.json"))
+
+
+@pytest.mark.parametrize("name", ["COASTSNAP_MANIFEST_PATHS", "COASTSNAP_DERIVATIVES_INDEX_PATHS"])
+def test_listed_paths_under_production_storage_are_refused(name):
+    env = {**multi_env(COASTSNAP_MANIFEST_PATHS="m.json"), name: f"ok.json{SEP}/g/data/qu34/x.json"}
+    with pytest.raises(SettingsError, match="/g/data"):
+        Settings.from_env(env)

@@ -7,13 +7,13 @@ media from an in-memory catalogue built at startup from these inputs:
 
 1. **A reviewed site registry** (JSON). This is the only thing that decides whether
    a site is public and whether its originals may be downloaded.
-2. **One worker manifest** in the existing `apps/worker` format
-   (`manifests/<root_id>.json`). It is parsed with the worker's own
-   `coastsnap_import.models.Manifest`.
-3. **An optional derivatives index** (JSON) listing thumbnails and previews.
-   It is written by the worker's `python -m coastsnap_import.derivatives`
-   command and parsed with the worker's own
-   `coastsnap_import.derivatives.DerivativesIndex`.
+2. **One or more worker manifests**, one per site, in the existing
+   `apps/worker` format (`manifests/<root_id>.json`). They are parsed with
+   the worker's own `coastsnap_import.models.Manifest`.
+3. **Optional derivatives indexes** (JSON), at most one per manifest, listing
+   thumbnails and previews. They are written by the worker's
+   `python -m coastsnap_import.derivatives` command and parsed with the
+   worker's own `coastsnap_import.derivatives.DerivativesIndex`.
 4. **An optional local media root** that the Level 1 paths resolve beneath,
    and an optional **separate derivatives root** for the worker's
    `--output-root`.
@@ -51,11 +51,57 @@ Environment variables (see `.env.example`; names only, never commit values):
 |---|---|---|
 | `AUSCIN_API_ENV` | no (default `development`) | `development`, `test` or `production`. Outside production, any path under `/g/data` is refused at startup. |
 | `COASTSNAP_SITE_REGISTRY_PATH` | yes | Reviewed site registry JSON |
-| `COASTSNAP_MANIFEST_PATH` | yes | One worker manifest JSON |
-| `COASTSNAP_DERIVATIVES_INDEX_PATH` | no | Thumbnail/preview index. Without it, no derivative URLs are offered. |
+| `COASTSNAP_MANIFEST_PATH` | this or the list | One worker manifest JSON (one site) |
+| `COASTSNAP_MANIFEST_PATHS` | this or the single path | Several worker manifests, one per site, separated by the OS path separator (`;` on Windows, `:` on POSIX) |
+| `COASTSNAP_DERIVATIVES_INDEX_PATH` | no | Thumbnail/preview index for the single manifest. Without it, no derivative URLs are offered. |
+| `COASTSNAP_DERIVATIVES_INDEX_PATHS` | no | Indexes for several manifests, same separator, at most one per manifest root |
 | `COASTSNAP_MEDIA_ROOT` | no | Local media root for Level 1 paths (the worker's staging directory). Without it, media URLs are null and media endpoints return 503. If set, it must exist when the app starts. |
 | `COASTSNAP_DERIVATIVES_ROOT` | no | Directory the derivatives index's paths resolve beneath (the worker's `--output-root`). Defaults to `COASTSNAP_MEDIA_ROOT`, and requires it to be set. |
 | `AUSCIN_MEDIA_BASE_URL` | no | An http(s) origin used as a prefix for media URLs, e.g. `http://localhost:8000`. Without it, media URLs are root-relative. |
+
+### One site or several
+
+Manifest and index paths are **explicit catalogue inputs**. The API loads
+exactly the files configured and never searches a directory for more.
+
+- **One site:** set `COASTSNAP_MANIFEST_PATH`, and optionally
+  `COASTSNAP_DERIVATIVES_INDEX_PATH`. Existing single-site deployments keep
+  working unchanged.
+- **Several sites:** set `COASTSNAP_MANIFEST_PATHS`, and optionally
+  `COASTSNAP_DERIVATIVES_INDEX_PATHS`, as lists separated by the OS path
+  separator.
+
+Startup refuses:
+- the singular and plural form of the same setting set together;
+- a list with an empty entry, or the same file listed twice;
+- any path under `/g/data` outside production.
+
+Each derivatives index is paired with the manifest whose `root_id` it
+records, so list order doesn't matter. An index whose root has no configured
+manifest is refused, as is a second index for the same root. A manifest
+without an index simply offers no thumbnails or previews.
+
+All manifests share `COASTSNAP_MEDIA_ROOT` (and `COASTSNAP_DERIVATIVES_ROOT`).
+That matches the worker's layout: one staging directory holding
+`level-0|level-1/root-<root_id>/…` for every site, and one derivatives root
+holding `derivatives/…/root-<root_id>/…`.
+
+Windows PowerShell:
+
+```powershell
+$env:COASTSNAP_MANIFEST_PATHS = "C:\coastsnap-staging\manifests\<ROOT_A>.json;C:\coastsnap-staging\manifests\<ROOT_B>.json"
+$env:COASTSNAP_DERIVATIVES_INDEX_PATHS = "C:\coastsnap-derivatives\<ROOT_A>-index.json;C:\coastsnap-derivatives\<ROOT_B>-index.json"
+```
+
+POSIX shell:
+
+```sh
+export COASTSNAP_MANIFEST_PATHS="/srv/coastsnap-staging/manifests/<ROOT_A>.json:/srv/coastsnap-staging/manifests/<ROOT_B>.json"
+export COASTSNAP_DERIVATIVES_INDEX_PATHS="/srv/coastsnap-derivatives/<ROOT_A>-index.json:/srv/coastsnap-derivatives/<ROOT_B>-index.json"
+```
+
+Each site is still published only under the visibility rules below. One
+ineligible site is hidden without affecting the others.
 
 ## Running locally against the synthetic fixtures
 
@@ -242,6 +288,15 @@ The loader also rejects:
 - a derivatives index for another root, for unknown observations, with
   non-JPEG derivatives, or with unknown fields
 - naive (non-UTC) timestamps
+- across several manifests:
+  - two manifests with the same root ID;
+  - a derivatives index whose root has no configured manifest;
+  - two indexes for one root;
+  - a duplicate public media ID.
+
+Loading is all-or-nothing across manifests: any of these, or corrupt input
+in any one manifest, rejects the whole catalogue, and the error names the
+manifest's root ID.
 
 ### Presentable entries
 

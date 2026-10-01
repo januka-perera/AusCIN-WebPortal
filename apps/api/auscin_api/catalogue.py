@@ -1,11 +1,14 @@
-"""In-memory CoastSnap catalogue built from a reviewed site registry, one
-worker manifest and an optional derivatives index.
+"""In-memory CoastSnap catalogue built from a reviewed site registry, one or
+more worker manifests (one per site/root) and optional derivatives indexes.
 
-The manifest and the derivatives index are parsed with the worker's own models
+Manifests and indexes are explicitly configured files, never found by
+scanning a directory. Each index is paired with the manifest whose root_id it
+records. They are parsed with the worker's own models
 (`coastsnap_import.models.Manifest` and
 `coastsnap_import.derivatives.DerivativesIndex`), so each has exactly one format. Loading is all-or-nothing: an unsafe
-path, an inconsistent root ID or an invalid registry or index rejects the whole
-input rather than serving a partially trusted catalogue.
+path, an inconsistent root ID, an invalid registry or index, or a conflict
+between manifests rejects the whole input rather than serving a partially
+trusted catalogue.
 
 Visibility rule: a site is published only when all three hold:
 
@@ -33,7 +36,7 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 from coastsnap_import.derivatives import DerivativeFile, DerivativeIndexEntry, DerivativesIndex
@@ -235,7 +238,7 @@ class Catalogue:
         media_enabled: bool = False,
         media_base_url: str = "",
     ):
-        """`sites` should already be eligible (see build_catalogue); the public check is repeated defensively."""
+        """`sites` should already be eligible (see build_multi_site_catalogue); the public check is repeated defensively."""
         self._sites = {site.policy.site_id: site for site in sites if site.policy.publication_status == "public"}
         by_site: dict[str, list[CatalogueObservation]] = {site_id: [] for site_id in self._sites}
         for observation in observations:
@@ -251,7 +254,8 @@ class Catalogue:
     # Sites
 
     def list_sites(self) -> list[CoastSnapSiteResponse]:
-        return [_site_response(site) for site in sorted(self._sites.values(), key=lambda s: s.policy.name)]
+        ordered = sorted(self._sites.values(), key=lambda s: (s.policy.name, s.policy.site_id))
+        return [_site_response(site) for site in ordered]
 
     def get_site(self, site_id: str) -> Optional[CoastSnapSiteResponse]:
         site = self._sites.get(site_id)
@@ -465,14 +469,8 @@ def _servable_content_type(relative_path: str) -> Optional[str]:
     return SAFE_IMAGE_CONTENT_TYPES.get(suffix[dot:].lower()) if dot > 0 else None
 
 
-def build_catalogue(
-    registry: SiteRegistry,
-    manifest: Manifest,
-    derivatives: Optional[DerivativesIndex] = None,
-    *,
-    media_enabled: bool = False,
-    media_base_url: str = "",
-) -> Catalogue:
+def _validate_manifest(manifest: Manifest) -> set[str]:
+    """Structural and path-safety checks for one manifest. Returns its observation IDs."""
     root_id = manifest.root_id
     if not _SOURCE_ID_RE.match(root_id):
         raise CatalogueError("manifest root_id has an unexpected format")
@@ -492,78 +490,183 @@ def build_catalogue(
             # Each checksum becomes that level's public ETag and published integrity value.
             if product is not None and not _SHA256_RE.match(product.checksum.sha256):
                 raise CatalogueError(f"observation {obs.observation_id!r} {level_name} checksum is not a SHA-256 hex digest")
+    return seen
 
-    level1_by_obs = {e.observation.observation_id: e.level1 for e in manifest.entries}
+
+def _current_derivatives(
+    manifest: Manifest, observation_ids: set[str], derivatives: Optional[DerivativesIndex]
+) -> dict[str, DerivativeIndexEntry]:
+    """The index entries that match this manifest's current Level 1 products, by observation ID."""
     derivative_by_obs: dict[str, DerivativeIndexEntry] = {}
-    if derivatives is not None:
-        if derivatives.root_id != root_id:
-            raise CatalogueError("derivatives index root_id does not match the manifest root_id")
-        for item in derivatives.derivatives:
-            if item.observation_id not in seen:
-                raise CatalogueError(f"derivatives index references unknown observation {item.observation_id!r}")
-            if item.observation_id in derivative_by_obs:
-                raise CatalogueError(f"duplicate observation {item.observation_id!r} in derivatives index")
-            _validate_derivative_paths(item, root_id)
-            level1 = level1_by_obs[item.observation_id]
-            if level1 is None or item.source_sha256 != level1.checksum.sha256 or item.level1_product_id != level1.product_id:
-                # Made from a different Level 1 than the manifest now records. Stale renditions are
-                # dropped (so none is offered) rather than served as if they matched the original.
-                logger.warning("Ignoring stale derivatives for observation %r", item.observation_id)
-                continue
-            derivative_by_obs[item.observation_id] = item
+    if derivatives is None:
+        return derivative_by_obs
+    root_id = manifest.root_id
+    if derivatives.root_id != root_id:
+        raise CatalogueError("derivatives index root_id does not match the manifest root_id")
+    level1_by_obs = {e.observation.observation_id: e.level1 for e in manifest.entries}
+    for item in derivatives.derivatives:
+        if item.observation_id not in observation_ids:
+            raise CatalogueError(f"derivatives index references unknown observation {item.observation_id!r}")
+        if item.observation_id in derivative_by_obs:
+            raise CatalogueError(f"duplicate observation {item.observation_id!r} in derivatives index")
+        _validate_derivative_paths(item, root_id)
+        level1 = level1_by_obs[item.observation_id]
+        if level1 is None or item.source_sha256 != level1.checksum.sha256 or item.level1_product_id != level1.product_id:
+            # Made from a different Level 1 than the manifest now records. Stale renditions are
+            # dropped (so none is offered) rather than served as if they matched the original.
+            logger.warning("Ignoring stale derivatives for observation %r", item.observation_id)
+            continue
+        derivative_by_obs[item.observation_id] = item
+    return derivative_by_obs
 
-    site = next((s for s in registry.sites if s.spotteron_root_id == root_id), None)
+
+def _publish_manifest(
+    registry: SiteRegistry, manifest: Manifest, derivatives: Optional[DerivativesIndex]
+) -> tuple[Optional[PublishedSite], list[CatalogueObservation]]:
+    """Validates one manifest, then applies the three visibility rules to its site.
+
+    Corrupt or unsafe input raises CatalogueError. An ineligible site is simply not
+    published: (None, [])."""
+    observation_ids = _validate_manifest(manifest)
+    derivative_by_obs = _current_derivatives(manifest, observation_ids, derivatives)
     coordinates = confirmed_coordinates(effective_manifest_site(manifest))
-    observations: list[CatalogueObservation] = []
-    if site is not None and site.publication_status == "public" and coordinates is None:
+
+    site = next((s for s in registry.sites if s.spotteron_root_id == manifest.root_id), None)
+    if site is None or site.publication_status != "public":
+        return None, []
+    if coordinates is None:
         logger.warning("Public site %s not published: no confirmed coordinate in the manifest.", site.site_id)
-    if site is not None and site.publication_status == "public" and coordinates is not None:
-        zone = ZoneInfo(site.display_time_zone)
-        for entry in manifest.entries:
-            obs = entry.observation
-            # Only complete records are presentable: both products present and a known capture time.
-            if entry.level0 is None or entry.level1 is None or obs.spotted_at_utc is None:
-                continue
-            captured = _utc(obs.spotted_at_utc, field=f"observation {obs.observation_id!r} spotted_at_utc")
-            derivative = derivative_by_obs.get(obs.observation_id)
-            observations.append(
-                CatalogueObservation(
-                    media_id=build_media_id(site.site_id, obs.observation_id),
-                    site_id=site.site_id,
-                    media_type="image",
-                    captured_at_utc=captured,
-                    captured_at_source_raw=obs.spotted_at_raw,
-                    ingested_at_utc=_utc(entry.ingested_at_utc, field="ingested_at_utc"),
-                    local_date=captured.astimezone(zone).date(),
-                    media=MediaRecord(
-                        level0=ProductFile(
-                            relative_path=entry.level0.local_relative_path,
-                            content_type=_servable_content_type(entry.level0.local_relative_path),
-                            file_size=entry.level0.file_size_bytes,
-                            sha256=entry.level0.checksum.sha256,
-                            download_permitted=site.level0_download_permitted,
-                        ),
-                        level1=ProductFile(
-                            relative_path=entry.level1.local_relative_path,
-                            content_type=_servable_content_type(entry.level1.local_relative_path),
-                            file_size=entry.level1.file_size_bytes,
-                            sha256=entry.level1.checksum.sha256,
-                            download_permitted=site.level1_download_permitted,
-                        ),
-                        width=derivative.source_width if derivative else None,
-                        height=derivative.source_height if derivative else None,
-                        thumbnail=derivative.thumbnail if derivative else None,
-                        preview=derivative.preview if derivative else None,
+        return None, []
+
+    zone = ZoneInfo(site.display_time_zone)
+    observations: list[CatalogueObservation] = []
+    for entry in manifest.entries:
+        obs = entry.observation
+        # Only complete records are presentable: both products present and a known capture time.
+        if entry.level0 is None or entry.level1 is None or obs.spotted_at_utc is None:
+            continue
+        captured = _utc(obs.spotted_at_utc, field=f"observation {obs.observation_id!r} spotted_at_utc")
+        derivative = derivative_by_obs.get(obs.observation_id)
+        observations.append(
+            CatalogueObservation(
+                media_id=build_media_id(site.site_id, obs.observation_id),
+                site_id=site.site_id,
+                media_type="image",
+                captured_at_utc=captured,
+                captured_at_source_raw=obs.spotted_at_raw,
+                ingested_at_utc=_utc(entry.ingested_at_utc, field="ingested_at_utc"),
+                local_date=captured.astimezone(zone).date(),
+                media=MediaRecord(
+                    level0=ProductFile(
+                        relative_path=entry.level0.local_relative_path,
+                        content_type=_servable_content_type(entry.level0.local_relative_path),
+                        file_size=entry.level0.file_size_bytes,
+                        sha256=entry.level0.checksum.sha256,
+                        download_permitted=site.level0_download_permitted,
                     ),
-                )
+                    level1=ProductFile(
+                        relative_path=entry.level1.local_relative_path,
+                        content_type=_servable_content_type(entry.level1.local_relative_path),
+                        file_size=entry.level1.file_size_bytes,
+                        sha256=entry.level1.checksum.sha256,
+                        download_permitted=site.level1_download_permitted,
+                    ),
+                    width=derivative.source_width if derivative else None,
+                    height=derivative.source_height if derivative else None,
+                    thumbnail=derivative.thumbnail if derivative else None,
+                    preview=derivative.preview if derivative else None,
+                ),
             )
-        if not observations:
-            logger.warning("Public site %s not published: no presentable observation in the manifest.", site.site_id)
+        )
+    if not observations:
+        logger.warning("Public site %s not published: no presentable observation in the manifest.", site.site_id)
+        return None, []
+    return PublishedSite(policy=site, latitude=coordinates[0], longitude=coordinates[1]), observations
+
+
+def build_multi_site_catalogue(
+    registry: SiteRegistry,
+    manifests: Sequence[Manifest],
+    derivatives_indexes: Sequence[DerivativesIndex] = (),
+    *,
+    media_enabled: bool = False,
+    media_base_url: str = "",
+) -> Catalogue:
+    """One catalogue from several explicitly configured manifests, one per site/root.
+
+    All-or-nothing: corrupt or unsafe input in any manifest or index, or a conflict
+    between them, rejects the whole catalogue. Each site is then published or hidden
+    by the same rules as a single manifest. Derivatives indexes are paired with
+    manifests by the root_id each records, never by position.
+    """
+    if not manifests:
+        raise CatalogueError("at least one manifest is required")
+    roots = [manifest.root_id for manifest in manifests]
+    duplicate_roots = sorted({root for root in roots if roots.count(root) > 1})
+    if duplicate_roots:
+        raise CatalogueError(f"more than one manifest for root_id {duplicate_roots[0]!r}")
+
+    index_by_root: dict[str, DerivativesIndex] = {}
+    for index in derivatives_indexes:
+        if index.root_id not in roots:
+            raise CatalogueError(f"derivatives index root_id {index.root_id!r} does not match any configured manifest root_id")
+        if index.root_id in index_by_root:
+            raise CatalogueError(f"more than one derivatives index for root_id {index.root_id!r}")
+        index_by_root[index.root_id] = index
 
     published: list[PublishedSite] = []
-    if site is not None and coordinates is not None and observations:
-        published.append(PublishedSite(policy=site, latitude=coordinates[0], longitude=coordinates[1]))
+    observations: list[CatalogueObservation] = []
+    for manifest in manifests:
+        try:
+            site, site_observations = _publish_manifest(registry, manifest, index_by_root.get(manifest.root_id))
+        except CatalogueError as exc:
+            raise CatalogueError(f"manifest for root_id {manifest.root_id!r}: {exc}") from exc
+        if site is not None:
+            published.append(site)
+            observations.extend(site_observations)
+
+    # Unique by construction (the registry rejects duplicate site and root IDs, and each manifest
+    # rejects duplicate observations), but checked: a collision would serve one site's file as another's.
+    media_ids = [observation.media_id for observation in observations]
+    if len(set(media_ids)) != len(media_ids):
+        raise CatalogueError("duplicate public media ID in the catalogue")
     return Catalogue(published, observations, media_enabled=media_enabled, media_base_url=media_base_url)
+
+
+def build_catalogue(
+    registry: SiteRegistry,
+    manifest: Manifest,
+    derivatives: Optional[DerivativesIndex] = None,
+    *,
+    media_enabled: bool = False,
+    media_base_url: str = "",
+) -> Catalogue:
+    """Single-manifest form of build_multi_site_catalogue."""
+    if derivatives is not None and derivatives.root_id != manifest.root_id:
+        # Kept as its own message: in single-manifest mode the index can only belong to this manifest.
+        raise CatalogueError("derivatives index root_id does not match the manifest root_id")
+    return build_multi_site_catalogue(
+        registry, [manifest], [derivatives] if derivatives is not None else [],
+        media_enabled=media_enabled, media_base_url=media_base_url,
+    )
+
+
+def load_multi_site_catalogue(
+    site_registry_path: Path,
+    manifest_paths: Sequence[Path],
+    derivatives_index_paths: Sequence[Path] = (),
+    *,
+    media_enabled: bool = False,
+    media_base_url: str = "",
+) -> Catalogue:
+    """Loads exactly the configured files. Never searches a directory for more."""
+    return build_multi_site_catalogue(
+        load_registry(site_registry_path),
+        [load_manifest(path) for path in manifest_paths],
+        [load_derivatives_index(path) for path in derivatives_index_paths],
+        media_enabled=media_enabled,
+        media_base_url=media_base_url,
+    )
 
 
 def load_catalogue(
@@ -574,6 +677,7 @@ def load_catalogue(
     media_enabled: bool = False,
     media_base_url: str = "",
 ) -> Catalogue:
+    """Single-manifest form of load_multi_site_catalogue."""
     return build_catalogue(
         load_registry(site_registry_path),
         load_manifest(manifest_path),

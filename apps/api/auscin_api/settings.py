@@ -2,6 +2,17 @@
 
 Validated eagerly so a missing or unsafe value fails at startup rather
 than on the first request.
+
+Catalogue inputs are explicit file lists, never discovered by scanning:
+
+- one manifest: COASTSNAP_MANIFEST_PATH (and optionally COASTSNAP_DERIVATIVES_INDEX_PATH);
+- several manifests: COASTSNAP_MANIFEST_PATHS (and optionally
+  COASTSNAP_DERIVATIVES_INDEX_PATHS), each a list separated by os.pathsep
+  (";" on Windows, ":" on POSIX). Indexes are paired with manifests by the
+  root_id each records, so their order doesn't matter.
+
+Setting both the singular and plural form of either is refused, so a
+leftover value can never be silently ignored.
 """
 
 from __future__ import annotations
@@ -23,6 +34,12 @@ class SettingsError(Exception):
     """Raised for missing or invalid configuration."""
 
 
+def _same_path_key(path: Path) -> str:
+    """Comparison key for duplicate detection: absolute, normalised and case-folded where the OS is.
+    Purely lexical, so it never touches the filesystem."""
+    return os.path.normcase(os.path.abspath(path))
+
+
 def _is_under_production_storage(path: Path) -> bool:
     # Compare on a POSIX-style string so "/g/data/..." is caught on Windows too,
     # where Path("/g/data/x") renders as "\\g\\data\\x".
@@ -34,9 +51,11 @@ def _is_under_production_storage(path: Path) -> bool:
 class Settings:
     environment: ApiEnvironment
     site_registry_path: Path
-    manifest_path: Path
-    derivatives_index_path: Optional[Path] = None
-    """Optional thumbnail/preview index. Without it, no derivative URLs are offered."""
+    manifest_paths: tuple[Path, ...]
+    """One or more worker manifests, one per site/root. Exactly these files are loaded."""
+    derivatives_index_paths: tuple[Path, ...] = ()
+    """Optional thumbnail/preview indexes, at most one per manifest root. A manifest without one offers no
+    derivative URLs."""
     media_root: Optional[Path] = None
     """Local directory that the manifest's Level 1 paths resolve beneath. Without it, no media is served."""
     derivatives_root: Optional[Path] = None
@@ -50,10 +69,21 @@ class Settings:
             raise SettingsError(
                 f"AUSCIN_API_ENV must be one of {', '.join(get_args(ApiEnvironment))}; got {self.environment!r}."
             )
+        object.__setattr__(self, "manifest_paths", tuple(self.manifest_paths))
+        object.__setattr__(self, "derivatives_index_paths", tuple(self.derivatives_index_paths))
+        if not self.manifest_paths:
+            raise SettingsError("COASTSNAP_MANIFEST_PATH or COASTSNAP_MANIFEST_PATHS is required.")
+        for name, paths in (
+            ("COASTSNAP_MANIFEST_PATHS", self.manifest_paths),
+            ("COASTSNAP_DERIVATIVES_INDEX_PATHS", self.derivatives_index_paths),
+        ):
+            keys = [_same_path_key(path) for path in paths]
+            if len(set(keys)) != len(keys):
+                raise SettingsError(f"{name} lists the same file more than once.")
         for name, path in (
             ("COASTSNAP_SITE_REGISTRY_PATH", self.site_registry_path),
-            ("COASTSNAP_MANIFEST_PATH", self.manifest_path),
-            ("COASTSNAP_DERIVATIVES_INDEX_PATH", self.derivatives_index_path),
+            *(("COASTSNAP_MANIFEST_PATH(S)", path) for path in self.manifest_paths),
+            *(("COASTSNAP_DERIVATIVES_INDEX_PATH(S)", path) for path in self.derivatives_index_paths),
             ("COASTSNAP_MEDIA_ROOT", self.media_root),
             ("COASTSNAP_DERIVATIVES_ROOT", self.derivatives_root),
         ):
@@ -84,11 +114,23 @@ class Settings:
                 raise SettingsError(f"{name} is required.")
             return path
 
+        def _path_list(single: str, plural: str) -> tuple[Path, ...]:
+            single_path = _optional_path(single)
+            plural_value = (source.get(plural) or "").strip()
+            if single_path is not None and plural_value:
+                raise SettingsError(f"Set either {single} or {plural}, not both.")
+            if not plural_value:
+                return (single_path,) if single_path is not None else ()
+            entries = [entry.strip() for entry in plural_value.split(os.pathsep)]
+            if any(not entry for entry in entries):
+                raise SettingsError(f"{plural} has an empty entry; separate paths with {os.pathsep!r}.")
+            return tuple(Path(entry) for entry in entries)
+
         return cls(
             environment=(source.get("AUSCIN_API_ENV") or "development").strip(),  # type: ignore[arg-type]
             site_registry_path=_required_path("COASTSNAP_SITE_REGISTRY_PATH"),
-            manifest_path=_required_path("COASTSNAP_MANIFEST_PATH"),
-            derivatives_index_path=_optional_path("COASTSNAP_DERIVATIVES_INDEX_PATH"),
+            manifest_paths=_path_list("COASTSNAP_MANIFEST_PATH", "COASTSNAP_MANIFEST_PATHS"),
+            derivatives_index_paths=_path_list("COASTSNAP_DERIVATIVES_INDEX_PATH", "COASTSNAP_DERIVATIVES_INDEX_PATHS"),
             media_root=_optional_path("COASTSNAP_MEDIA_ROOT"),
             derivatives_root=_optional_path("COASTSNAP_DERIVATIVES_ROOT"),
             media_base_url=(source.get("AUSCIN_MEDIA_BASE_URL") or "").strip(),

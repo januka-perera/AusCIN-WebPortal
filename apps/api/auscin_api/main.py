@@ -10,7 +10,7 @@ from typing import Optional
 
 from fastapi import FastAPI, Request
 
-from .catalogue import Catalogue, load_catalogue
+from .catalogue import Catalogue, load_multi_site_catalogue
 from .errors import register_error_handlers
 from .media_store import LocalMediaStore, MediaStore
 from .routes import coastsnap, media
@@ -37,10 +37,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         except ValueError as exc:
             raise SettingsError(f"COASTSNAP_DERIVATIVES_ROOT is invalid: {exc}") from exc
 
-    catalogue = load_catalogue(
+    catalogue = load_multi_site_catalogue(
         settings.site_registry_path,
-        settings.manifest_path,
-        settings.derivatives_index_path,
+        settings.manifest_paths,
+        settings.derivatives_index_paths,
         media_enabled=media_store is not None,
         media_base_url=settings.media_base_url,
     )

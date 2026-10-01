@@ -178,6 +178,11 @@ worker manifests + a reviewed site registry at startup.
   `manifest_relative_path`. **Only sites listed here, with
   `publication_status: "public"`, are exposed** — a manifest existing on disk
   never publishes anything by itself.
+- **Manifests**: one per site, configured explicitly, never discovered.
+  Use `COASTSNAP_MANIFEST_PATH` for one site, or the `os.pathsep`-separated
+  `COASTSNAP_MANIFEST_PATHS` for several. Derivatives indexes follow the same
+  pattern (`COASTSNAP_DERIVATIVES_INDEX_PATH(S)`) and are paired with
+  manifests by root ID. See `apps/api/README.md` → "One site or several".
 - **Media root** (`COASTSNAP_MEDIA_ROOT`): the directory the manifest's
   relative paths resolve against (staging dir locally,
   `<NCI_PUBLICATION_ROOT>` mount in production).

@@ -307,6 +307,33 @@ run. The manifest refuses to continue if `GADI_REMOTE_ROOT` differs from the
 remote root it already records. See `apps/worker/README.md` → "Remote root
 consistency".
 
+## Serving more than one site
+
+Repeat steps 0–5 for each further root ID, using the **same**
+`COASTSNAP_STAGING_DIR` and `COASTSNAP_DERIVATIVES_ROOT`. The worker
+already separates sites under `root-<root_id>/`. Give each site its own
+manifest (the worker default, `manifests/<root_id>.json`) and its own index
+file, e.g. `$COASTSNAP_DERIVATIVES_ROOT/<root_id>-index.json`.
+
+`write-registry` writes a one-site registry. For several sites, combine the
+reviewed `sites` entries into one registry file by hand and review it again:
+each site keeps its own explicit publication and download decisions.
+
+Then, in step 7, list every manifest and index explicitly in place of the
+singular settings. Never point the API at a directory:
+
+```bash
+unset COASTSNAP_MANIFEST_PATH COASTSNAP_DERIVATIVES_INDEX_PATH
+export COASTSNAP_MANIFEST_PATHS="$COASTSNAP_STAGING_DIR/manifests/<ROOT_A>.json:$COASTSNAP_STAGING_DIR/manifests/<ROOT_B>.json"
+export COASTSNAP_DERIVATIVES_INDEX_PATHS="$COASTSNAP_DERIVATIVES_ROOT/<ROOT_A>-index.json:$COASTSNAP_DERIVATIVES_ROOT/<ROOT_B>-index.json"
+```
+
+Setting the singular and plural forms together is refused, and so is
+listing the same file twice. Indexes are matched to manifests by the root ID
+they record. `/api/v1/health` should report one public site for every site
+that is public, has a confirmed coordinate and has at least one presentable
+image. See `apps/api/README.md` → "One site or several".
+
 ## Clean up
 
 Remove local staging only after review, and after the transfer has been

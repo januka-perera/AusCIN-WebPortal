@@ -50,8 +50,8 @@ def fixture_settings(
     return Settings(
         environment="test",
         site_registry_path=registry,
-        manifest_path=manifest,
-        derivatives_index_path=derivatives_index,
+        manifest_paths=(manifest,),
+        derivatives_index_paths=(derivatives_index,) if derivatives_index is not None else (),
         media_root=media_root,
         derivatives_root=derivatives_root,
         media_base_url=media_base_url,
